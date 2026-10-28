@@ -1,0 +1,3 @@
+# Git rerere resolution cache directory
+# Preimage and postimage resolution hashes stored here will be committed
+# and loaded into .git/rr-cache during CI builds.
