@@ -1,0 +1,1974 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ website_title }}: {{ page_title }}{% endblock %}
+
+{% block head %}
+<script defer src="{{ url_for('indi_allsky.static', filename='js/sensor-slots.js') }}"></script>
+<script src="{{ url_for('indi_allsky.static', filename='js/indi-allsky-tabs.js') }}"></script>
+<script type="text/javascript">
+var camera_id = {{ camera_id }};
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="tw:container tw:mx-auto tw:px-4 tw:py-6">
+
+<form id="form_config" onSubmit="return false;" autocomplete="off" novalidate>
+
+<nav class="tw:mb-6">
+  <div class="tw:flex tw:flex-wrap tw:gap-2 tw:bg-base-200 tw:p-2.5 tw:rounded-[var(--radius-box)] tw:border tw:border-base-300 tw:shadow-sm" id="nav-tab" role="tablist">
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-primary tw:font-bold tw:uppercase tw:tracking-wider tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-camera-tab" data-tab-target="nav-camera" type="button" role="tab"><i class="tw:icon-[lucide--camera] tw:w-3.5 tw:h-3.5"></i> Camera</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-image-tab" data-tab-target="nav-image" type="button" role="tab"><i class="tw:icon-[lucide--image] tw:w-3.5 tw:h-3.5"></i> Image</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-processing-tab" data-tab-target="nav-processing" type="button" role="tab"><i class="tw:icon-[lucide--sliders] tw:w-3.5 tw:h-3.5"></i> Processing</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-overlays-tab" data-tab-target="nav-overlays" type="button" role="tab"><i class="tw:icon-[lucide--layers] tw:w-3.5 tw:h-3.5"></i> Overlays</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-timelapse-tab" data-tab-target="nav-timelapse" type="button" role="tab"><i class="tw:icon-[lucide--video] tw:w-3.5 tw:h-3.5"></i> Timelapse</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-location-tab" data-tab-target="nav-location" type="button" role="tab"><i class="tw:icon-[lucide--map-pin] tw:w-3.5 tw:h-3.5"></i> Location</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-admin-tab" data-tab-target="nav-admin" type="button" role="tab"><i class="tw:icon-[lucide--shield] tw:w-3.5 tw:h-3.5"></i> Admin</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-filetransfer-tab" data-tab-target="nav-filetransfer" type="button" role="tab"><i class="tw:icon-[lucide--arrow-right-left] tw:w-3.5 tw:h-3.5"></i> File Transfer</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-mqtt-tab" data-tab-target="nav-mqtt" type="button" role="tab"><i class="tw:icon-[lucide--radio] tw:w-3.5 tw:h-3.5"></i> MQTT</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-youtube-tab" data-tab-target="nav-youtube" type="button" role="tab"><i class="tw:icon-[lucide--youtube] tw:w-3.5 tw:h-3.5"></i> YouTube</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-s3-tab" data-tab-target="nav-s3" type="button" role="tab"><i class="tw:icon-[lucide--database] tw:w-3.5 tw:h-3.5"></i> Object Storage</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-syncapi-tab" data-tab-target="nav-syncapi" type="button" role="tab"><i class="tw:icon-[lucide--refresh-cw] tw:w-3.5 tw:h-3.5"></i> SyncAPI</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-allskymap-tab" data-tab-target="nav-allskymap" type="button" role="tab"><i class="tw:icon-[lucide--map] tw:w-3.5 tw:h-3.5"></i> Allsky Map</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-sensors-tab" data-tab-target="nav-sensors" type="button" role="tab"><i class="tw:icon-[lucide--cpu] tw:w-3.5 tw:h-3.5"></i> Sensors</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-devices-tab" data-tab-target="nav-devices" type="button" role="tab"><i class="tw:icon-[lucide--plug] tw:w-3.5 tw:h-3.5"></i> Devices</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-adsb-tab" data-tab-target="nav-adsb" type="button" role="tab"><i class="tw:icon-[lucide--plane] tw:w-3.5 tw:h-3.5"></i> ADS-B</button>
+    <button class="tab-btn tw:btn tw:btn-sm tw:btn-ghost tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/60 hover:tw:text-base-content tw:gap-1.5 active:tw:scale-95 tw:transition-all" id="nav-sat_track-tab" data-tab-target="nav-sat_track" type="button" role="tab"><i class="tw:icon-[lucide--satellite] tw:w-3.5 tw:h-3.5"></i> Satellite Tracking</button>
+  </div>
+</nav>
+
+<div>{{ longitude_validation_message | safe }}</div>
+
+{% if fits_enabled %}
+<div class="tw:alert tw:alert-warning tw:py-2.5 tw:text-xs tw:rounded-[var(--radius-box)] shadow-sm tw:my-2">
+    <i class="tw:icon-[lucide--alert-triangle] tw:w-4 tw:h-4"></i>
+    <span>Saving FITS files is enabled [Image tab]</span>
+</div>
+{% endif %}
+
+{% if mark_detections_enabled %}
+<div class="tw:alert tw:alert-warning tw:py-2.5 tw:text-xs tw:rounded-[var(--radius-box)] shadow-sm tw:my-2">
+    <i class="tw:icon-[lucide--alert-triangle] tw:w-4 tw:h-4"></i>
+    <span>Mark Detections on Image is enabled [Processing tab]</span>
+</div>
+{% endif %}
+
+<div class="tw:flex tw:flex-col tw:gap-2 tw:mb-4">
+    <div id="success-message" class="tw:alert tw:alert-success tw:shadow-sm" style="display: none;"></div>
+    <div id="save-error-banner" class="tw:alert tw:alert-error tw:py-2.5 tw:text-sm" style="display: none;">
+        <i class="tw:icon-[lucide--triangle-alert] tw:w-4 tw:h-4 tw:shrink-0"></i>
+        <div>
+            <p id="save-error-title" class="tw:font-semibold">Save failed &mdash; please fix these fields:</p>
+            <p id="save-error-fields" class="tw:text-xs tw:opacity-90 tw:mt-0.5"></p>
+        </div>
+    </div>
+</div>
+
+<!-- Save & Note Footer Bar -->
+<div class="tw:card tw:bg-base-200 tw:border tw:border-base-300 hover:tw:border-base-content/25 tw:transition-all tw:rounded-[var(--radius-box)] shadow-md tw:mt-4 tw:mb-8 sticky-desktop-header">
+    <div class="tw:card-body tw:p-4 sm:tw:p-5 tw:flex tw:flex-row tw:flex-wrap sm:tw:flex-nowrap tw:items-center tw:gap-4">
+        <button id="save-button" class="tw:btn tw:btn-primary tw:btn-md tw:gap-2 tw:font-bold tw:uppercase tw:tracking-wider tw:flex-shrink-0 tw:shadow-[0_0_15px_rgba(59,130,246,0.3)] hover:tw:shadow-[0_0_25px_rgba(59,130,246,0.5)] active:tw:scale-95 tw:transition-all">
+            <i class="tw:icon-[lucide--save] tw:w-4 tw:h-4"></i>
+            Save Configuration
+        </button>
+        <label class="tw:flex tw:items-center tw:gap-2 tw:cursor-pointer tw:select-none tw:flex-shrink-0 tw:px-1">
+            {{ form_config.RELOAD_ON_SAVE(class='tw:toggle tw:toggle-primary tw:toggle-sm') }}
+            <span class="tw:text-xs tw:font-bold tw:uppercase tw:tracking-wider tw:text-base-content/80 tw:whitespace-nowrap" title="Restart capture after saving. The restart can take 1–3 minutes.">{{ form_config.RELOAD_ON_SAVE.label.text }}</span>
+        </label>
+        <div id="RELOAD_ON_SAVE-error" class="tw:text-error tw:text-xs tw:mt-1" style="display: none;"></div>
+        <div class="tw:flex tw:items-center tw:gap-3 tw:flex-1 tw:min-w-[200px]">
+            <span class="tw:text-xs tw:font-bold tw:uppercase tw:text-base-content/70 tw:whitespace-nowrap">{{ form_config.CONFIG_NOTE.label.text }}:</span>
+            <div class="tw:flex-1">
+                {{ form_config.CONFIG_NOTE(class='tw:input tw:input-bordered tw:input-sm tw:h-11 tw:bg-base-100 tw:text-base-content tw:w-full', placeholder='Optional note describing this configuration change...') }}
+                <div id="CONFIG_NOTE-error" class="tw:text-error tw:text-xs tw:mt-1" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="tab-content" id="nav-tabContent">
+    {% include 'config/camera.html' %}
+    {% include 'config/image.html' %}
+    {% include 'config/overlays.html' %}
+    {% include 'config/timelapse.html' %}
+    {% include 'config/processing.html' %}
+    {% include 'config/location.html' %}
+    {% include 'config/admin.html' %}
+    {% include 'config/filetransfer.html' %}
+    {% include 'config/mqtt.html' %}
+    {% include 'config/youtube.html' %}
+    {% include 'config/s3.html' %}
+    {% include 'config/syncapi.html' %}
+    {% include 'config/allskymap.html' %}
+    {% include 'config/sensors.html' %}
+    {% include 'config/devices.html' %}
+    {% include 'config/adsb.html' %}
+    {% include 'config/sat_track.html' %}
+</div>
+
+</form>
+</div>
+
+<script>
+const successMessage = $('#success-message');
+
+const field_names = [
+    'csrf_token',
+    'CAMERA_INTERFACE',
+    'INDI_SERVER',
+    'INDI_PORT',
+    'INDI_CAMERA_NAME',
+    'WEBSITE__TITLE',
+    'OWNER',
+    'LENS_NAME',
+    'LENS_FOCAL_LENGTH',
+    'LENS_FOCAL_RATIO',
+    'LENS_IMAGE_CIRCLE',
+    'LENS_OFFSET_X',
+    'LENS_OFFSET_Y',
+    'LENS_ALTITUDE',
+    'LENS_AZIMUTH',
+    'CCD_CONFIG__NIGHT__GAIN',
+    'CCD_CONFIG__NIGHT__BINNING',
+    'CCD_CONFIG__MOONMODE__GAIN',
+    'CCD_CONFIG__MOONMODE__BINNING',
+    'CCD_CONFIG__DAY__GAIN',
+    'CCD_CONFIG__DAY__BINNING',
+    'CCD_CONFIG__EXPOSURE_CLASSNAME',
+    'CCD_CONFIG__AUTO_GAIN_LEVELS',
+    'CCD_EXPOSURE_MAX',
+    'CCD_EXPOSURE_DEF',
+    'CCD_EXPOSURE_MIN',
+    'CCD_EXPOSURE_MIN_DAY',
+    'CCD_EXPOSURE_TIMEOUT',
+    'CCD_BIT_DEPTH',
+    'IMAGE_CALIBRATE_MANUAL_OFFSET',
+    'IMAGE_CALIBRATE_HOLE_THOLD',
+    'EXPOSURE_PERIOD',
+    'EXPOSURE_PERIOD_DAY',
+    'CAMERA_SQM__EXPOSURE',
+    'CAMERA_SQM__GAIN',
+    'CAMERA_SQM__BINNING',
+    'CAMERA_SQM__EXPOSURE_PERIOD',
+    'CAMERA_SQM__MAGNITUDE_OFFSET',
+    'FOCUS_DELAY',
+    'WBR_FACTOR',
+    'WBG_FACTOR',
+    'WBB_FACTOR',
+    'WBR_FACTOR_DAY',
+    'WBG_FACTOR_DAY',
+    'WBB_FACTOR_DAY',
+    'WBR_MTF_MIDTONES',
+    'WBG_MTF_MIDTONES',
+    'WBB_MTF_MIDTONES',
+    'WBR_MTF_MIDTONES_DAY',
+    'WBG_MTF_MIDTONES_DAY',
+    'WBB_MTF_MIDTONES_DAY',
+    'SATURATION_FACTOR',
+    'SATURATION_FACTOR_DAY',
+    'GAMMA_CORRECTION',
+    'GAMMA_CORRECTION_DAY',
+    'SHARPEN_AMOUNT',
+    'SHARPEN_AMOUNT_DAY',
+    'CFA_PATTERN',
+    'SCNR_ALGORITHM',
+    'SCNR_ALGORITHM_DAY',
+    'SCNR_MTF_MIDTONES',
+    'SCNR_MTF_MIDTONES_DAY',
+    'IMAGE_DENOISE',
+    'IMAGE_DENOISE_DAY',
+    'IMAGE_DENOISE_STRENGTH',
+    'IMAGE_DENOISE_STRENGTH_DAY',
+    'BILATERAL_SIGMA_COLOR',
+    'BILATERAL_SIGMA_COLOR_DAY',
+    'BILATERAL_SIGMA_SPACE',
+    'BILATERAL_SIGMA_SPACE_DAY',
+    'CCD_TEMP',
+    'CCD_TEMP_DAY',
+    'TEMP_DISPLAY',
+    'PRESSURE_DISPLAY',
+    'WINDSPEED_DISPLAY',
+    'CCD_TEMP_SCRIPT',
+    'TARGET_ADU',
+    'TARGET_ADU_DAY',
+    'TARGET_ADU_DEV',
+    'TARGET_ADU_DEV_DAY',
+    'ADU_ROI_X1',
+    'ADU_ROI_Y1',
+    'ADU_ROI_X2',
+    'ADU_ROI_Y2',
+    'ADU_FOV_DIV',
+    'SQM_ROI_X1',
+    'SQM_ROI_Y1',
+    'SQM_ROI_X2',
+    'SQM_ROI_Y2',
+    'SQM_FOV_DIV',
+    'DETECT_STARS_THOLD',
+    'DETECT_STARS_METHOD',
+    'DETECT_STARS_SEP_THOLD',
+    'DETECT_STARS_SEP_MAX_RADIUS',
+    'DETECT_METEORS_THOLD',
+    'DETECT_MASK',
+    'LOGO_OVERLAY',
+    'HEALTHCHECK__DISK_USAGE',
+    'HEALTHCHECK__SWAP_USAGE',
+    'LOCATION_NAME',
+    'LOCATION_LATITUDE',
+    'LOCATION_LONGITUDE',
+    'LOCATION_ELEVATION',
+    'SMOKE_ENABLE',
+    'NIGHT_SUN_ALT_DEG',
+    'NIGHT_MOONMODE_ALT_DEG',
+    'NIGHT_MOONMODE_PHASE',
+    'WEB_STATUS_TEMPLATE',
+    'WEB_EXTRA_TEXT',
+    'WEBSOCKET_API_KEY',
+    'CLAHE_CLIPLIMIT',
+    'CLAHE_GRIDSIZE',
+    'IMAGE_STRETCH__CLASSNAME',
+    'IMAGE_STRETCH__MODE1_GAMMA',
+    'IMAGE_STRETCH__MODE1_STDDEVS',
+    'IMAGE_STRETCH__MODE2_SHADOWS',
+    'IMAGE_STRETCH__MODE2_MIDTONES',
+    'IMAGE_STRETCH__MODE2_HIGHLIGHTS',
+    'IMAGE_STRETCH__MODE3_BLACK_CLIP',
+    'IMAGE_STRETCH__MODE3_SHADOWS',
+    'IMAGE_STRETCH__MODE3_MIDTONES',
+    'IMAGE_STRETCH__MODE3_HIGHLIGHTS',
+    'KEOGRAM_ANGLE',
+    'KEOGRAM_H_SCALE',
+    'KEOGRAM_V_SCALE',
+    'KEOGRAM_CROP_TOP',
+    'KEOGRAM_CROP_BOTTOM',
+    'LONGTERM_KEOGRAM__OFFSET_X',
+    'LONGTERM_KEOGRAM__OFFSET_Y',
+    'LONGTERM_KEOGRAM__MONTH_LABEL_TEMPLATE',
+    'LONGTERM_KEOGRAM__PIL_FONT_SIZE',
+    'LONGTERM_KEOGRAM__OPENCV_FONT_SCALE',
+    'REALTIME_KEOGRAM__MAX_ENTRIES',
+    'REALTIME_KEOGRAM__SAVE_INTERVAL',
+    'STARTRAILS_MAX_ADU',
+    'STARTRAILS_MASK_THOLD',
+    'STARTRAILS_PIXEL_THOLD',
+    'STARTRAILS_MIN_STARS',
+    'STARTRAILS_TIMELAPSE_MINFRAMES',
+    'STARTRAILS_SUN_ALT_THOLD',
+    'STARTRAILS_MOON_ALT_THOLD',
+    'STARTRAILS_MOON_PHASE_THOLD',
+    'STARTRAILS__IMAGE_CIRCLE_MASK_DIAMETER',
+    'STARTRAILS__IMAGE_CIRCLE_MASK_BLUR',
+    'STARTRAILS__IMAGE_CIRCLE_MASK_OPACITY',
+    'IMAGE_FILE_TYPE',
+    'IMAGE_FILE_COMPRESSION__JPG',
+    'IMAGE_FILE_COMPRESSION__PNG',
+    'IMAGE_FILE_COMPRESSION__TIF',
+    'IMAGE_FOLDER',
+    'VARLIB_FOLDER',
+    'IMAGE_LABEL_TEMPLATE',
+    'IMAGE_EXTRA_TEXT',
+    'IMAGE_ROTATE',
+    'IMAGE_ROTATE_ANGLE',
+    'IMAGE_SCALE',
+    'IMAGE_COLORMAP',
+    'IMAGE_CIRCLE_MASK__DIAMETER',
+    'IMAGE_CIRCLE_MASK__OFFSET_X',
+    'IMAGE_CIRCLE_MASK__OFFSET_Y',
+    'IMAGE_CIRCLE_MASK__BLUR',
+    'IMAGE_CIRCLE_MASK__OPACITY',
+    'IMAGE_CROP_ROI_X1',
+    'IMAGE_CROP_ROI_Y1',
+    'IMAGE_CROP_ROI_X2',
+    'IMAGE_CROP_ROI_Y2',
+    'MOON_OVERLAY__X',
+    'MOON_OVERLAY__Y',
+    'MOON_OVERLAY__SCALE',
+    'MOON_OVERLAY__DARK_SIDE_SCALE',
+    'LIGHTGRAPH_OVERLAY__GRAPH_HEIGHT',
+    'LIGHTGRAPH_OVERLAY__GRAPH_BORDER',
+    'LIGHTGRAPH_OVERLAY__NOW_MARKER_SIZE',
+    'LIGHTGRAPH_OVERLAY__Y',
+    'LIGHTGRAPH_OVERLAY__OFFSET_X',
+    'LIGHTGRAPH_OVERLAY__SCALE',
+    'LIGHTGRAPH_OVERLAY__DAY_COLOR',
+    'LIGHTGRAPH_OVERLAY__DUSK_COLOR',
+    'LIGHTGRAPH_OVERLAY__NIGHT_COLOR',
+    'LIGHTGRAPH_OVERLAY__MOONMODE_COLOR',
+    'LIGHTGRAPH_OVERLAY__HOUR_COLOR',
+    'LIGHTGRAPH_OVERLAY__BORDER_COLOR',
+    'LIGHTGRAPH_OVERLAY__NOW_COLOR',
+    'LIGHTGRAPH_OVERLAY__FONT_COLOR',
+    'LIGHTGRAPH_OVERLAY__OPACITY',
+    'LIGHTGRAPH_OVERLAY__PIL_FONT_SIZE',
+    'LIGHTGRAPH_OVERLAY__OPENCV_FONT_SCALE',
+    'IMAGE_OVERLAY__LOAD_INTERVAL',
+    'IMAGE_OVERLAY__A_URL',
+    'IMAGE_OVERLAY__A_IMAGE_FILE_TYPE',
+    'IMAGE_OVERLAY__A_USERNAME',
+    'IMAGE_OVERLAY__A_PASSWORD',
+    'IMAGE_OVERLAY__A_WIDTH',
+    'IMAGE_OVERLAY__A_HEIGHT',
+    'IMAGE_OVERLAY__A_X',
+    'IMAGE_OVERLAY__A_Y',
+    'FISH2PANO__DIAMETER',
+    'FISH2PANO__OFFSET_X',
+    'FISH2PANO__OFFSET_Y',
+    'FISH2PANO__ROTATE_ANGLE',
+    'FISH2PANO__SCALE',
+    'FISH2PANO__MODULUS',
+    'FISH2PANO__DIRS_OFFSET_BOTTOM',
+    'FISH2PANO__OPENCV_FONT_SCALE',
+    'FISH2PANO__PIL_FONT_SIZE',
+    'CIRCULAR_DISPLAY__RESOLUTION',
+    'CIRCULAR_DISPLAY__IMAGE_CIRCLE_DIAMETER',
+    'IMAGE_EXPORT_RAW',
+    'IMAGE_EXPORT_FOLDER',
+    'IMAGE_STACK_METHOD',
+    'IMAGE_STACK_COUNT',
+    'IMAGE_ALIGN_DETECTSIGMA',
+    'IMAGE_ALIGN_POINTS',
+    'IMAGE_ALIGN_SOURCEMINAREA',
+    'BACKUP_DB_PERIOD_DAYS',
+    'IMAGE_EXPIRE_DAYS',
+    'IMAGE_RAW_EXPIRE_DAYS',
+    'IMAGE_FITS_EXPIRE_DAYS',
+    'IMAGE_QUEUE_MAX',
+    'IMAGE_QUEUE_MIN',
+    'IMAGE_QUEUE_BACKOFF',
+    'IMAGE_SAVE_HOOK_PRE',
+    'IMAGE_SAVE_HOOK_POST',
+    'IMAGE_SAVE_HOOK_TIMEOUT',
+    'CAPTURE_HOOK_PRE',
+    'CAPTURE_HOOK_TIMEOUT',
+    'IMAGE_SAVE_FITS_PERIOD',
+    // ASI676MC numeric controls remain in the central save list even though
+    // their UI now lives in the section-based Image component.
+    'IMAGE_ASI676MC_REPAIR__PURPLE_RATIO_THRESHOLD',
+    'IMAGE_ASI676MC_REPAIR__RED_SIDE_RATIO_THRESHOLD',
+    'IMAGE_ASI676MC_REPAIR__BLUE_SIDE_RATIO_THRESHOLD',
+    'IMAGE_ASI676MC_REPAIR__SAMPLE_STEP',
+    'IMAGE_ASI676MC_REPAIR__SOURCE_SATURATION_THRESHOLD',
+    'IMAGE_ASI676MC_REPAIR__GAIN_R',
+    'IMAGE_ASI676MC_REPAIR__GAIN_G1',
+    'IMAGE_ASI676MC_REPAIR__GAIN_G2',
+    'IMAGE_ASI676MC_REPAIR__GAIN_B',
+    'IMAGE_ASI676MC_REPAIR__HIGHLIGHT_BLEND_START_RATIO',
+    'IMAGE_ASI676MC_REPAIR__HIGHLIGHT_BLEND_END_RATIO',
+    'IMAGE_ASI676MC_REPAIR__CHUNK_ROWS',
+    'TIMELAPSE_EXPIRE_DAYS',
+    'FFMPEG_FRAMERATE',
+    'FFMPEG_FRAMERATE_DAY',
+    'FFMPEG_BITRATE',
+    'FFMPEG_BITRATE_DAY',
+    'FFMPEG_VFSCALE',
+    'FFMPEG_VFSCALE_DAY',
+    'FFMPEG_VFSCALE_STARTRAIL',
+    'FFMPEG_CODEC',
+    'FFMPEG_EXTRA_OPTIONS',
+    'FFMPEG_EXTRA_OPTIONS_DAY',
+    'TIMELAPSE_SKIP_FRAMES',
+    'TIMELAPSE__PRE_PROCESSOR',
+    'TIMELAPSE__PRE_PROCESSOR_DAY',
+    'TIMELAPSE__IMAGE_CIRCLE',
+    'TIMELAPSE__KEOGRAM_RATIO',
+    'TIMELAPSE__PRE_SCALE',
+    'IMAGE_LABEL_SYSTEM',
+    'TEXT_PROPERTIES__FONT_FACE',
+    'TEXT_PROPERTIES__FONT_HEIGHT',
+    'TEXT_PROPERTIES__FONT_X',
+    'TEXT_PROPERTIES__FONT_Y',
+    'TEXT_PROPERTIES__FONT_COLOR',
+    'TEXT_PROPERTIES__FONT_SCALE',
+    'TEXT_PROPERTIES__FONT_THICKNESS',
+    'TEXT_PROPERTIES__PIL_FONT_FILE',
+    'TEXT_PROPERTIES__PIL_FONT_CUSTOM',
+    'TEXT_PROPERTIES__PIL_FONT_SIZE',
+    'CARDINAL_DIRS__FONT_COLOR',
+    'CARDINAL_DIRS__CHAR_NORTH',
+    'CARDINAL_DIRS__CHAR_EAST',
+    'CARDINAL_DIRS__CHAR_WEST',
+    'CARDINAL_DIRS__CHAR_SOUTH',
+    'CARDINAL_DIRS__DIAMETER',
+    'CARDINAL_DIRS__OFFSET_X',
+    'CARDINAL_DIRS__OFFSET_Y',
+    'CARDINAL_DIRS__OFFSET_TOP',
+    'CARDINAL_DIRS__OFFSET_LEFT',
+    'CARDINAL_DIRS__OFFSET_RIGHT',
+    'CARDINAL_DIRS__OFFSET_BOTTOM',
+    'CARDINAL_DIRS__OPENCV_FONT_SCALE',
+    'CARDINAL_DIRS__PIL_FONT_SIZE',
+    'ORB_PROPERTIES__MODE',
+    'ORB_PROPERTIES__RADIUS',
+    'ORB_PROPERTIES__SUN_COLOR',
+    'ORB_PROPERTIES__MOON_COLOR',
+    'ORB_PROPERTIES__AZ_OFFSET',
+    'IMAGE_BORDER__TOP',
+    'IMAGE_BORDER__LEFT',
+    'IMAGE_BORDER__RIGHT',
+    'IMAGE_BORDER__BOTTOM',
+    'IMAGE_BORDER__COLOR',
+    'UPLOAD_WORKERS',
+    'FILETRANSFER__CLASSNAME',
+    'FILETRANSFER__HOST',
+    'FILETRANSFER__PORT',
+    'FILETRANSFER__USERNAME',
+    'FILETRANSFER__PASSWORD',
+    'FILETRANSFER__PRIVATE_KEY',
+    'FILETRANSFER__PUBLIC_KEY',
+    'FILETRANSFER__CONNECT_TIMEOUT',
+    'FILETRANSFER__TIMEOUT',
+    'FILETRANSFER__REMOTE_IMAGE_NAME',
+    'FILETRANSFER__REMOTE_IMAGE_FOLDER',
+    'FILETRANSFER__REMOTE_PANORAMA_NAME',
+    'FILETRANSFER__REMOTE_PANORAMA_FOLDER',
+    'FILETRANSFER__REMOTE_PANORAMA_VIDEO_NAME',
+    'FILETRANSFER__REMOTE_PANORAMA_VIDEO_FOLDER',
+    'FILETRANSFER__REMOTE_METADATA_NAME',
+    'FILETRANSFER__REMOTE_METADATA_FOLDER',
+    'FILETRANSFER__REMOTE_RAW_NAME',
+    'FILETRANSFER__REMOTE_RAW_FOLDER',
+    'FILETRANSFER__REMOTE_FITS_NAME',
+    'FILETRANSFER__REMOTE_FITS_FOLDER',
+    'FILETRANSFER__REMOTE_VIDEO_NAME',
+    'FILETRANSFER__REMOTE_VIDEO_FOLDER',
+    'FILETRANSFER__REMOTE_MINI_VIDEO_NAME',
+    'FILETRANSFER__REMOTE_MINI_VIDEO_FOLDER',
+    'FILETRANSFER__REMOTE_KEOGRAM_NAME',
+    'FILETRANSFER__REMOTE_KEOGRAM_FOLDER',
+    'FILETRANSFER__REMOTE_STARTRAIL_NAME',
+    'FILETRANSFER__REMOTE_STARTRAIL_FOLDER',
+    'FILETRANSFER__REMOTE_STARTRAIL_VIDEO_NAME',
+    'FILETRANSFER__REMOTE_STARTRAIL_VIDEO_FOLDER',
+    'FILETRANSFER__REMOTE_REALTIME_KEOGRAM_NAME',
+    'FILETRANSFER__REMOTE_REALTIME_KEOGRAM_FOLDER',
+    'FILETRANSFER__REMOTE_ENDOFNIGHT_FOLDER',
+    'FILETRANSFER__REMOTE_LATEST_FOLDER',
+    'FILETRANSFER__REMOTE_DB_BACKUP_FOLDER',
+    'FILETRANSFER__UPLOAD_IMAGE',
+    'FILETRANSFER__UPLOAD_PANORAMA',
+    'FILETRANSFER__UPLOAD_REALTIME_KEOGRAM',
+    'FILETRANSFER__LIBCURL_OPTIONS',
+    'S3UPLOAD__CLASSNAME',
+    'S3UPLOAD__ACCESS_KEY',
+    'S3UPLOAD__SECRET_KEY',
+    'S3UPLOAD__CREDS_FILE',
+    'S3UPLOAD__BUCKET',
+    'S3UPLOAD__REGION',
+    'S3UPLOAD__ENDPOINT_URL',
+    'S3UPLOAD__NAMESPACE',
+    'S3UPLOAD__HOST',
+    'S3UPLOAD__PORT',
+    'S3UPLOAD__CONNECT_TIMEOUT',
+    'S3UPLOAD__TIMEOUT',
+    'S3UPLOAD__URL_TEMPLATE',
+    'S3UPLOAD__ACL',
+    'S3UPLOAD__STORAGE_CLASS',
+    'MQTTPUBLISH__TRANSPORT',
+    'MQTTPUBLISH__PROTOCOL',
+    'MQTTPUBLISH__HOST',
+    'MQTTPUBLISH__PORT',
+    'MQTTPUBLISH__USERNAME',
+    'MQTTPUBLISH__PASSWORD',
+    'MQTTPUBLISH__BASE_TOPIC',
+    'MQTTPUBLISH__QOS',
+    'SYNCAPI__BASEURL',
+    'SYNCAPI__USERNAME',
+    'SYNCAPI__APIKEY',
+    'SYNCAPI__UPLOAD_IMAGE',
+    'SYNCAPI__UPLOAD_PANORAMA',
+    'SYNCAPI__CONNECT_TIMEOUT',
+    'SYNCAPI__TIMEOUT',
+    'YOUTUBE__SECRETS_FILE',
+    'YOUTUBE__PRIVACY_STATUS',
+    'YOUTUBE__TITLE_TEMPLATE',
+    'YOUTUBE__DESCRIPTION_TEMPLATE',
+    'YOUTUBE__CATEGORY',
+    'YOUTUBE__TAGS_STR',
+    'YOUTUBE__REDIRECT_URI',
+    'FITSHEADERS__0__KEY',
+    'FITSHEADERS__0__VAL',
+    'FITSHEADERS__1__KEY',
+    'FITSHEADERS__1__VAL',
+    'FITSHEADERS__2__KEY',
+    'FITSHEADERS__2__VAL',
+    'FITSHEADERS__3__KEY',
+    'FITSHEADERS__3__VAL',
+    'FITSHEADERS__4__KEY',
+    'FITSHEADERS__4__VAL',
+    'ADMIN_NETWORKS_FLASK',
+    'LIBCAMERA__CAMERA_ID',
+    'LIBCAMERA__IMAGE_FILE_TYPE',
+    'LIBCAMERA__IMAGE_FILE_TYPE_DAY',
+    'LIBCAMERA__AWB',
+    'LIBCAMERA__AWB_DAY',
+    'LIBCAMERA__EXTRA_OPTIONS',
+    'LIBCAMERA__EXTRA_OPTIONS_DAY',
+    'LIBCAMERA__MQTT_TRANSPORT',
+    'LIBCAMERA__MQTT_PROTOCOL',
+    'LIBCAMERA__MQTT_HOST',
+    'LIBCAMERA__MQTT_PORT',
+    'LIBCAMERA__MQTT_USERNAME',
+    'LIBCAMERA__MQTT_PASSWORD',
+    'LIBCAMERA__MQTT_QOS',
+    'LIBCAMERA__MQTT_EXPOSURE_TOPIC',
+    'LIBCAMERA__MQTT_IMAGE_TOPIC',
+    'LIBCAMERA__MQTT_METADATA_TOPIC',
+    'PYCURL_CAMERA__URL',
+    'PYCURL_CAMERA__IMAGE_FILE_TYPE',
+    'PYCURL_CAMERA__USERNAME',
+    'PYCURL_CAMERA__PASSWORD',
+    'ACCUM_CAMERA__SUB_EXPOSURE_MAX',
+    'TEST_CAMERA__WIDTH',
+    'TEST_CAMERA__HEIGHT',
+    'TEST_CAMERA__IMAGE_CIRCLE_DIAMETER',
+    'TEST_CAMERA__IMAGE_CIRCLE_OFFSET_X',
+    'TEST_CAMERA__IMAGE_CIRCLE_OFFSET_Y',
+    'TEST_CAMERA__ROTATING_STAR_COUNT',
+    'TEST_CAMERA__ROTATING_STAR_FACTOR',
+    'TEST_CAMERA__BUBBLE_COUNT',
+    'VIRTUALSKY__MAGNITUDE',
+    'VIRTUALSKY__POINTING_AZIMUTH',
+    'VIRTUALSKY__IMAGE_CIRCLE_DIAMETER',
+    'VIRTUALSKY__LATITUDE_OFFSET',
+    'VIRTUALSKY__LONGITUDE_OFFSET',
+    'VIRTUALSKY__OFFSET_X',
+    'VIRTUALSKY__OFFSET_Y',
+    'FOCUSER__CLASSNAME',
+    'FOCUSER__GPIO_PIN_1',
+    'FOCUSER__GPIO_PIN_2',
+    'FOCUSER__GPIO_PIN_3',
+    'FOCUSER__GPIO_PIN_4',
+    'FOCUSER__I2C_ADDRESS',
+    'DEW_HEATER__CLASSNAME',
+    'DEW_HEATER__I2C_ADDRESS',
+    'DEW_HEATER__PIN_1',
+    'DEW_HEATER__LEVEL_DEF',
+    'DEW_HEATER__MANUAL_TARGET',
+    'DEW_HEATER__TEMP_USER_VAR_SLOT',
+    'DEW_HEATER__DEWPOINT_USER_VAR_SLOT',
+    'DEW_HEATER__LEVEL_LOW',
+    'DEW_HEATER__LEVEL_MED',
+    'DEW_HEATER__LEVEL_HIGH',
+    'DEW_HEATER__THOLD_DIFF_LOW',
+    'DEW_HEATER__THOLD_DIFF_MED',
+    'DEW_HEATER__THOLD_DIFF_HIGH',
+    'DEW_HEATER__HOLD_SECONDS',
+    'DEW_HEATER__PWM_FREQUENCY',
+    'FAN__CLASSNAME',
+    'FAN__I2C_ADDRESS',
+    'FAN__PIN_1',
+    'FAN__LEVEL_DEF',
+    'FAN__TARGET',
+    'FAN__TEMP_USER_VAR_SLOT',
+    'FAN__LEVEL_LOW',
+    'FAN__LEVEL_MED',
+    'FAN__LEVEL_HIGH',
+    'FAN__THOLD_DIFF_LOW',
+    'FAN__THOLD_DIFF_MED',
+    'FAN__THOLD_DIFF_HIGH',
+    'FAN__HOLD_SECONDS',
+    'FAN__PWM_FREQUENCY',
+    'GENERIC_GPIO__A_CLASSNAME',
+    'GENERIC_GPIO__A_I2C_ADDRESS',
+    'GENERIC_GPIO__A_PIN_1',
+    'MANUAL_GPIO__A_CLASSNAME',
+    'MANUAL_GPIO__A_PIN_1',
+    'MANUAL_GPIO__A_PIN_2',
+    'MANUAL_GPIO__A_PIN_3',
+    'DEVICE__MQTT_TRANSPORT',
+    'DEVICE__MQTT_PROTOCOL',
+    'DEVICE__MQTT_HOST',
+    'DEVICE__MQTT_PORT',
+    'DEVICE__MQTT_USERNAME',
+    'DEVICE__MQTT_PASSWORD',
+    'DEVICE__MQTT_QOS',
+    {% for letter in form_config.sensor_letters %}
+    {% for field in ['CLASSNAME', 'LABEL', 'PIN_1', 'PIN_2', 'USER_VAR_SLOT', 'I2C_ADDRESS', 'TITLE_TEMPLATE'] %}
+    'TEMP_SENSOR__{{ letter }}_{{ field }}',
+    {% endfor %}
+    {% endfor %}
+    'TEMP_SENSOR__OPENWEATHERMAP_APIKEY',
+    'TEMP_SENSOR__WUNDERGROUND_APIKEY',
+    'TEMP_SENSOR__ASTROSPHERIC_APIKEY',
+    'TEMP_SENSOR__AMBIENTWEATHER_APIKEY',
+    'TEMP_SENSOR__AMBIENTWEATHER_APPLICATIONKEY',
+    'TEMP_SENSOR__AMBIENTWEATHER_MACADDRESS',
+    'TEMP_SENSOR__ECOWITT_APIKEY',
+    'TEMP_SENSOR__ECOWITT_APPLICATIONKEY',
+    'TEMP_SENSOR__ECOWITT_MACADDRESS',
+    'TEMP_SENSOR__MQTT_TRANSPORT',
+    'TEMP_SENSOR__MQTT_PROTOCOL',
+    'TEMP_SENSOR__MQTT_HOST',
+    'TEMP_SENSOR__MQTT_PORT',
+    'TEMP_SENSOR__MQTT_USERNAME',
+    'TEMP_SENSOR__MQTT_PASSWORD',
+    'TEMP_SENSOR__SHT4X_MODE_NIGHT',
+    'TEMP_SENSOR__SHT4X_MODE_DAY',
+    'TEMP_SENSOR__HDC302X_HEATER_NIGHT',
+    'TEMP_SENSOR__HDC302X_HEATER_DAY',
+    'TEMP_SENSOR__SI7021_HEATER_LEVEL_NIGHT',
+    'TEMP_SENSOR__SI7021_HEATER_LEVEL_DAY',
+    'TEMP_SENSOR__TSL2561_GAIN_NIGHT',
+    'TEMP_SENSOR__TSL2561_GAIN_DAY',
+    'TEMP_SENSOR__TSL2561_INT_NIGHT',
+    'TEMP_SENSOR__TSL2561_INT_DAY',
+    'TEMP_SENSOR__TSL2591_GAIN_NIGHT',
+    'TEMP_SENSOR__TSL2591_GAIN_DAY',
+    'TEMP_SENSOR__TSL2591_INT_NIGHT',
+    'TEMP_SENSOR__TSL2591_INT_DAY',
+    'TEMP_SENSOR__VEML7700_GAIN_NIGHT',
+    'TEMP_SENSOR__VEML7700_GAIN_DAY',
+    'TEMP_SENSOR__VEML7700_INT_NIGHT',
+    'TEMP_SENSOR__VEML7700_INT_DAY',
+    'TEMP_SENSOR__SI1145_VIS_GAIN_NIGHT',
+    'TEMP_SENSOR__SI1145_VIS_GAIN_DAY',
+    'TEMP_SENSOR__SI1145_IR_GAIN_NIGHT',
+    'TEMP_SENSOR__SI1145_IR_GAIN_DAY',
+    'TEMP_SENSOR__LTR390_GAIN_NIGHT',
+    'TEMP_SENSOR__LTR390_GAIN_DAY',
+    'TEMP_SENSOR__AS3935_NOISE_LEVEL',
+    'TEMP_SENSOR__AS3935_SPIKE_REJECTION',
+    'TEMP_SENSOR__LUX_MAGNITUDE_OFFSET',
+    'ADSB__DUMP1090_URL',
+    'ADSB__USERNAME',
+    'ADSB__PASSWORD',
+    'ADSB__ALT_DEG_MIN',
+    'ADSB__LABEL_LIMIT',
+    'ADSB__AIRCRAFT_LABEL_TEMPLATE',
+    'ADSB__IMAGE_LABEL_TEMPLATE_PREFIX',
+    'SATELLITE_TRACK__ALT_DEG_MIN',
+    'SATELLITE_TRACK__LABEL_LIMIT',
+    'SATELLITE_TRACK__SAT_LABEL_TEMPLATE',
+    'SATELLITE_TRACK__IMAGE_LABEL_TEMPLATE_PREFIX',
+    'INDI_CONFIG_DEFAULTS',
+    'INDI_CONFIG_DAY',
+    'CONFIG_NOTE',
+    'ALLSKYMAP__API_URL',
+    'ALLSKYMAP__API_KEY',
+    'ALLSKYMAP__CAMERA_NAME',
+    'ALLSKYMAP__CAMERA_OWNER',
+    'ALLSKYMAP__WEBSITE_URL',
+    'ALLSKYMAP__MAP_LATITUDE',
+    'ALLSKYMAP__MAP_LONGITUDE',
+    'ALLSKYMAP__INTERVAL',
+];
+
+const checkbox_field_names = [
+    'ENCRYPT_PASSWORDS',
+    'CAMERA_SQM__ENABLE',
+    'CAMERA_SQM__ENABLE_DAY',
+    'FOCUS_MODE',
+    'USE_NIGHT_COLOR',
+    'AUTO_WB',
+    'AUTO_WB_DAY',
+    'CCD_COOLING',
+    'CCD_COOLING_DAY',
+    'GPS_ENABLE',
+    'DETECT_STARS',
+    'DETECT_METEORS',
+    'DETECT_DRAW',
+    'CAPTURE_PAUSE',
+    'TIMELAPSE_ENABLE',
+    'TIMELAPSE__FFMPEG_REPORT',
+    'TIMELAPSE__USE_NIGHT_CONFIG',
+    'DAYTIME_CAPTURE',
+    'DAYTIME_CAPTURE_SAVE',
+    'DAYTIME_TIMELAPSE',
+    'DAYTIME_CONTRAST_ENHANCE',
+    'NIGHT_CONTRAST_ENHANCE',
+    'CONTRAST_ENHANCE_16BIT',
+    'IMAGE_STRETCH__SPLIT',
+    'IMAGE_STRETCH__MOONMODE',
+    'IMAGE_STRETCH__DAYTIME',
+    'KEOGRAM_LABEL',
+    'REALTIME_KEOGRAM__LABEL',
+    'LONGTERM_KEOGRAM__ENABLE',
+    'STARTRAILS_MOONMODE_THOLD',
+    'STARTRAILS_USE_DB_DATA',
+    'STARTRAILS_TIMELAPSE',
+    'STARTRAILS__IMAGE_CIRCLE_MASK_ENABLE',
+    'PRIVACY_MODE',
+    'IMAGE_EXIF_PRIVACY',
+    'TIMELAPSE_OVERWRITE',
+    'IMAGE_FLIP_V',
+    'IMAGE_FLIP_H',
+    'IMAGE_CIRCLE_MASK__ENABLE',
+    'IMAGE_CIRCLE_MASK__OUTLINE',
+    'IMAGE_CROP_IMAGE_CIRCLE',
+    'FISH2PANO__ENABLE',
+    'FISH2PANO__FLIP_H',
+    'FISH2PANO__ENABLE_CARDINAL_DIRS',
+    'CIRCULAR_DISPLAY__ENABLE',
+    'IMAGE_ROTATE_KEEP_SIZE',
+    'IMAGE_EXPORT_FLIP_V',
+    'IMAGE_EXPORT_FLIP_H',
+    'IMAGE_SAVE_FITS',
+    'IMAGE_SAVE_FITS_COMPRESSED',
+    'IMAGE_ASI676MC_REPAIR__ENABLE',
+    'IMAGE_ASI676MC_REPAIR__EXCLUDE_ONLY',
+    'IMAGE_ASI676MC_REPAIR__LOG_EVERY_FRAME',
+    'IMAGE_ASI676MC_REPAIR__GALLERY_ENABLE',
+    'IMAGE_ASI676MC_REPAIR__SAVE_DIAGNOSTIC_FITS',
+    'IMAGE_ASI676MC_REPAIR__SAVE_PRECEDING_FITS',
+    'IMAGE_STACK_ALIGN',
+    'IMAGE_STACK_SPLIT',
+    'IMAGE_STACK_MOONMODE',
+    'IMAGE_STACK_DAY',
+    'IMAGE_CALIBRATE_DARK',
+    'IMAGE_CALIBRATE_BPM',
+    'IMAGE_CALIBRATE_FIX_HOLES',
+    'IMAGE_SAVE_FITS_PRE_DARK',
+    'NIGHT_GRAYSCALE',
+    'DAYTIME_GRAYSCALE',
+    'MOON_OVERLAY__ENABLE',
+    'MOON_OVERLAY__FLIP_V',
+    'MOON_OVERLAY__FLIP_H',
+    'LIGHTGRAPH_OVERLAY__ENABLE',
+    'LIGHTGRAPH_OVERLAY__LABEL',
+    'LIGHTGRAPH_OVERLAY__HOUR_LINES',
+    'IMAGE_OVERLAY__ENABLE',
+    'TEXT_PROPERTIES__FONT_OUTLINE',
+    'CARDINAL_DIRS__ENABLE',
+    'CARDINAL_DIRS__SWAP_NS',
+    'CARDINAL_DIRS__SWAP_EW',
+    'CARDINAL_DIRS__OUTLINE_CIRCLE',
+    'ORB_PROPERTIES__RETROGRADE',
+    'FILETRANSFER__CERT_BYPASS',
+    'FILETRANSFER__ATOMIC_TRANSFERS',
+    'FILETRANSFER__UPLOAD_METADATA',
+    'FILETRANSFER__UPLOAD_RAW',
+    'FILETRANSFER__UPLOAD_FITS',
+    'FILETRANSFER__UPLOAD_VIDEO',
+    'FILETRANSFER__UPLOAD_MINI_VIDEO',
+    'FILETRANSFER__UPLOAD_KEOGRAM',
+    'FILETRANSFER__UPLOAD_STARTRAIL',
+    'FILETRANSFER__UPLOAD_STARTRAIL_VIDEO',
+    'FILETRANSFER__UPLOAD_PANORAMA_VIDEO',
+    'FILETRANSFER__UPLOAD_ENDOFNIGHT',
+    'FILETRANSFER__UPLOAD_LATEST_IMAGE',
+    'FILETRANSFER__UPLOAD_LATEST_PANORAMA',
+    'FILETRANSFER__UPLOAD_LATEST_RAW',
+    'FILETRANSFER__UPLOAD_LATEST_VIDEO',
+    'FILETRANSFER__UPLOAD_DB_BACKUP',
+    'FILETRANSFER__FORCE_IPV4',
+    'FILETRANSFER__FORCE_IPV6',
+    'S3UPLOAD__ENABLE',
+    'S3UPLOAD__UPLOAD_FITS',
+    'S3UPLOAD__UPLOAD_RAW',
+    'S3UPLOAD__TLS',
+    'S3UPLOAD__CERT_BYPASS',
+    'MQTTPUBLISH__ENABLE',
+    'MQTTPUBLISH__TLS',
+    'MQTTPUBLISH__CERT_BYPASS',
+    'MQTTPUBLISH__PUBLISH_IMAGE',
+    'SYNCAPI__ENABLE',
+    'SYNCAPI__CERT_BYPASS',
+    'SYNCAPI__POST_S3',
+    'SYNCAPI__EMPTY_FILE',
+    'SYNCAPI__UPLOAD_VIDEO',
+    'YOUTUBE__ENABLE',
+    'YOUTUBE__CREDS_STORED',
+    'YOUTUBE__UPLOAD_VIDEO',
+    'YOUTUBE__UPLOAD_MINI_VIDEO',
+    'YOUTUBE__UPLOAD_STARTRAIL_VIDEO',
+    'YOUTUBE__UPLOAD_PANORAMA_VIDEO',
+    'LIBCAMERA__AWB_ENABLE',
+    'LIBCAMERA__AWB_ENABLE_DAY',
+    'LIBCAMERA__CCM_DISABLE',
+    'LIBCAMERA__CCM_DISABLE_DAY',
+    'LIBCAMERA__IMMEDIATE',
+    'LIBCAMERA__IMMEDIATE_DAY',
+    'ACCUM_CAMERA__EVEN_EXPOSURES',
+    'ACCUM_CAMERA__CLAMP_16BIT',
+    'VIRTUALSKY__FLIP_H',
+    'VIRTUALSKY__FLIP_V',
+    'VIRTUALSKY__CONSTELLATIONS',
+    'VIRTUALSKY__CONSTELLATIONLABELS',
+    'VIRTUALSKY__SHOWSTARS',
+    'VIRTUALSKY__SHOWSTARLABELS',
+    'VIRTUALSKY__SHOWPLANETS',
+    'VIRTUALSKY__SHOWPLANETLABELS',
+    'TEMP_SENSOR__DHT_USE_PULSEIO',
+    'TEMP_SENSOR__FC37_ACTIVE_LOW',
+    'TEMP_SENSOR__SHT3X_HEATER_NIGHT',
+    'TEMP_SENSOR__SHT3X_HEATER_DAY',
+    'TEMP_SENSOR__HTU31D_HEATER_NIGHT',
+    'TEMP_SENSOR__HTU31D_HEATER_DAY',
+    'TEMP_SENSOR__TSL2561_DISABLE_DAY',
+    'TEMP_SENSOR__TSL2591_DISABLE_DAY',
+    'TEMP_SENSOR__SI1145_VIS_RANGE_HIGH_NIGHT',
+    'TEMP_SENSOR__SI1145_IR_RANGE_HIGH_NIGHT',
+    'TEMP_SENSOR__SI1145_VIS_RANGE_HIGH_DAY',
+    'TEMP_SENSOR__SI1145_IR_RANGE_HIGH_DAY',
+    'TEMP_SENSOR__INA3221_CH1_ENABLE',
+    'TEMP_SENSOR__INA3221_CH2_ENABLE',
+    'TEMP_SENSOR__INA3221_CH3_ENABLE',
+    'TEMP_SENSOR__AS3935_OUTDOOR_MODE',
+    'TEMP_SENSOR__AS3935_MASK_DISTURBER',
+    'TEMP_SENSOR__MQTT_TLS',
+    'TEMP_SENSOR__MQTT_CERT_BYPASS',
+    'DEW_HEATER__ENABLE_DAY',
+    'DEW_HEATER__INVERT_OUTPUT',
+    'DEW_HEATER__THOLD_ENABLE',
+    'FAN__ENABLE_NIGHT',
+    'FAN__INVERT_OUTPUT',
+    'FAN__THOLD_ENABLE',
+    'GENERIC_GPIO__A_INVERT_OUTPUT',
+    'DEVICE__MQTT_TLS',
+    'DEVICE__MQTT_CERT_BYPASS',
+    'LIBCAMERA__MQTT_TLS',
+    'LIBCAMERA__MQTT_CERT_BYPASS',
+    'ADSB__ENABLE',
+    'ADSB__CERT_BYPASS',
+    'ADSB__LABEL_ENABLE',
+    'SATELLITE_TRACK__ENABLE',
+    'SATELLITE_TRACK__DAYTIME_TRACK',
+    'SATELLITE_TRACK__LABEL_ENABLE',
+    'WEB_NONLOCAL_IMAGES',
+    'WEB_LOCAL_IMAGES_ADMIN',
+    'RELOAD_ON_SAVE',
+    'ALLSKYMAP__ENABLE',
+    'ALLSKYMAP__UPLOAD_IMAGE',
+];
+
+var fields = {};
+// Populate fields object
+field_names.forEach(item => {
+    fields[item] = {
+        'input' : $('#' + item),
+        'error' : $('#' + item + '-error'),
+    };
+});
+
+// Checkboxes
+checkbox_field_names.forEach(item => {
+    fields[item] = {
+        'input' : $('#' + item),
+        'error' : $('#' + item + '-error'),
+    };
+});
+
+
+
+
+$('#form_config').on('submit', function() {
+    const defaultSaveBtnClass = "tw:btn tw:btn-primary tw:btn-md tw:gap-2 tw:font-bold tw:uppercase tw:tracking-wider tw:flex-shrink-0 shadow-sm";
+    const defaultSaveBtnHtml = '<i class="tw:icon-[lucide--save] tw:w-4 tw:h-4"></i> Save Configuration';
+
+    // hide and remove all errors
+    successMessage.css({'display' : 'none'});
+    $('#save-error-banner').hide();
+    // Restore save button if it was red from a previous failure
+    $("#save-button").attr("class", defaultSaveBtnClass);
+    $("#save-button").html(defaultSaveBtnHtml);
+    $('.allsky-dyn-error').remove();
+    Object.keys(fields).forEach((key) => {
+        fields[key].input.removeClass('tw:input-error tw:select-error tw:toggle-error is-invalid');
+        fields[key].error.css({'display' : 'none'});
+    });
+
+
+    // Populate fields object
+    var json_data = {};
+    field_names.forEach(item => {
+        json_data[item] = fields[item].input.val();
+    });
+
+    $("#save-button").attr("class", "tw:btn tw:btn-neutral tw:btn-md tw:gap-2 tw:font-bold tw:uppercase tw:tracking-wider tw:flex-shrink-0 shadow-sm");
+    $("#save-button").html(
+      '<span class="tw:loading tw:loading-spinner tw:loading-xs"></span> Saving...'
+    );
+
+    // checkboxes
+    checkbox_field_names.forEach(item => {
+        json_data[item] = fields[item].input.prop('checked');
+    });
+
+    // reset option
+    $("#RELOAD_ON_SAVE").prop('checked', false);
+
+
+    $.ajax({
+        type: "POST",
+        url: "{{ url_for('indi_allsky.ajax_config_view') }}",
+        contentType: "application/json",
+        data: JSON.stringify(json_data),
+        success: function(rdata){
+            $("#save-button").attr("class", "tw:btn tw:btn-success tw:btn-md tw:gap-2 tw:font-bold tw:uppercase tw:tracking-wider tw:flex-shrink-0 shadow-sm");
+            $("#save-button").html(
+                '<i class="tw:icon-[lucide--check] tw:w-4 tw:h-4"></i> Saved'
+            );
+
+            setTimeout(function() {
+                $("#save-button").attr("class", defaultSaveBtnClass);
+                $("#save-button").html(defaultSaveBtnHtml);
+            }, 4000);
+
+            successMessage.html(rdata['success-message']);
+            successMessage.css({'display' : 'block'});
+            setTimeout(function() {
+                successMessage.css({'display' : 'none'});
+            }, 15000);
+
+            $('#CONFIG_NOTE').val('');
+        },
+        error: function(rdata){
+            $("#save-button").attr("class", "tw:btn tw:btn-error tw:btn-md tw:gap-2 tw:font-bold tw:uppercase tw:tracking-wider tw:flex-shrink-0 shadow-sm");
+            $("#save-button").html(
+                '<i class="tw:icon-[lucide--x] tw:w-4 tw:h-4"></i> Save Failed'
+            );
+            // Button stays red until re-submit — no auto-reset timer
+
+            var errors = JSON.parse(rdata.responseText);
+            var errorFieldNames = [];
+
+            var firstErrorTab = null;
+            Object.keys(errors).forEach((key) => {
+                if (key === 'form_global' || !fields[key]) return;
+
+                errorFieldNames.push(key);
+
+                // Red outline
+                fields[key].input.addClass('tw:input-error tw:select-error tw:toggle-error');
+                const sensorCard = fields[key].input.closest('[data-sensor-slot]');
+                if (sensorCard.length) {
+                    sensorCard.prop('hidden', false).children('input[type="checkbox"]').prop('checked', true);
+                    document.getElementById('sensor-slot-list').dispatchEvent(new Event('sensor-errors'));
+                }
+
+                // Show message under field — inject div if not already in HTML
+                var $err = fields[key].error;
+                if ($err.length === 0) {
+                    fields[key].input.after('<div id="' + key + '-error" class="allsky-dyn-error tw:text-error tw:text-xs tw:mt-1"></div>');
+                    $err = $('#' + key + '-error');
+                }
+                $err.html(errors[key].join('<br>')).css('display', 'block');
+
+                // Track first errored tab for auto-switch
+                if (!firstErrorTab) {
+                    var $pane = fields[key].input.closest('.tab-pane');
+                    if ($pane.length) {
+                        firstErrorTab = $pane.attr('id').replace(/^nav-/, '');
+                    }
+                }
+            });
+
+            // Show banner and scroll it into view
+            if (errorFieldNames.length > 0) {
+                $('#save-error-title').html('Save failed &mdash; please fix these fields:');
+                $('#save-error-fields').text(errorFieldNames.join(', '));
+                $('#save-error-banner').show()[0].scrollIntoView({behavior: 'smooth', block: 'nearest'});
+            } else {
+                var globalMsg = errors.description || errors.message || errors.form_global || (errors.error ? 'Server error (' + (errors.code || rdata.status) + '): ' + (errors.message || 'Bad Request') : 'An unexpected error occurred while saving.');
+                if (Array.isArray(globalMsg)) globalMsg = globalMsg.join(', ');
+                $('#save-error-title').html('Save failed:');
+                $('#save-error-fields').text(globalMsg);
+                $('#save-error-banner').show()[0].scrollIntoView({behavior: 'smooth', block: 'nearest'});
+            }
+
+            // Switch to first tab containing errors
+            if (firstErrorTab) {
+                var $btn = $('[data-tab-target="nav-' + firstErrorTab + '"]');
+                if ($btn.length) $btn[0].click();
+            }
+        },
+    });
+
+});
+
+function setBrowserLocationStatus(msg, is_error) {
+    const el = document.getElementById('BROWSER_LOCATION_STATUS');
+    if (!el) return;
+
+    el.classList.remove('tw:text-error', 'tw:text-success', 'tw:text-base-content/60', 'text-danger', 'text-success', 'text-secondary');
+
+    if (is_error) {
+        el.classList.add('tw:text-error');
+    } else {
+        el.classList.add('tw:text-success');
+    }
+
+    el.textContent = msg;
+}
+
+function setLocationFromBrowser() {
+    // Many browsers require HTTPS (or localhost) for geolocation.
+    const isLocalhost = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    const isSecure = (window.isSecureContext === true);
+
+    if (!navigator.geolocation) {
+        setBrowserLocationStatus('Geolocation is not supported by this browser.', true);
+        return;
+    }
+
+    if (!isSecure && !isLocalhost) {
+        setBrowserLocationStatus('Geolocation usually requires HTTPS (or localhost). If this fails, use HTTPS or a localhost/SSH tunnel.', true);
+    } else {
+        setBrowserLocationStatus('Requesting browser location…', false);
+    }
+
+    navigator.geolocation.getCurrentPosition(
+        function(pos) {
+            const lat = pos.coords.latitude;
+            const lon = pos.coords.longitude;
+
+            // Repo-genau: IDs sind LOCATION_LATITUDE / LOCATION_LONGITUDE / LOCATION_ELEVATION
+            const latEl = document.getElementById('LOCATION_LATITUDE');
+            const lonEl = document.getElementById('LOCATION_LONGITUDE');
+            const eleEl = document.getElementById('LOCATION_ELEVATION');
+
+            if (latEl) latEl.value = lat.toFixed(6);
+            if (lonEl) lonEl.value = lon.toFixed(6);
+
+            // altitude is optional, often null
+            if (eleEl && pos.coords.altitude !== null && pos.coords.altitude !== undefined) {
+                eleEl.value = String(Math.round(pos.coords.altitude));
+            }
+
+            // Automatically set NOAA smoke tracking based on NW hemisphere coverage
+            const smokeEl = document.getElementById('SMOKE_ENABLE');
+            if (smokeEl) {
+                smokeEl.checked = (lat > 0 && lon < 0);
+            }
+
+            const acc = (pos.coords.accuracy !== undefined && pos.coords.accuracy !== null) ? Math.round(pos.coords.accuracy) : null;
+            if (acc !== null) {
+                setBrowserLocationStatus('Location filled. Accuracy ~ ' + acc + ' m. Don’t forget to Save.', false);
+            } else {
+                setBrowserLocationStatus('Location filled. Don’t forget to Save.', false);
+            }
+        },
+        function(err) {
+            setBrowserLocationStatus('Location error: ' + err.message, true);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+}
+
+function group_on_change(trigger_checkbox_field, group_fields, group_checkbox_fields, inverted=false) {
+    $('#' + trigger_checkbox_field).on('change', function() {
+        var checked = $('#' + trigger_checkbox_field).prop('checked');
+        var enable = inverted ? !checked : checked;
+
+        if (!enable) {
+            group_fields.forEach(item => {
+                $('#' + item).attr({'readonly': true, 'disabled': true});
+                $('#' + item).addClass('bg-dark text-secondary');
+            });
+
+            group_checkbox_fields.forEach(item => {
+                $('#' + item).attr({'readonly': true, 'disabled': true});
+            });
+        } else {
+            group_fields.forEach(item => {
+                $('#' + item).removeAttr('readonly disabled');
+                $('#' + item).removeClass('bg-dark text-secondary');
+            });
+
+            group_checkbox_fields.forEach(item => {
+                $('#' + item).removeAttr('readonly disabled');
+            });
+        }
+    });
+}
+
+
+function group_on_ready(trigger_checkbox_field, group_fields, group_checkbox_fields, inverted=false) {
+    var checked = $('#' + trigger_checkbox_field).prop('checked');
+    var enable = inverted ? !checked : checked;
+
+    if (!enable) {
+        group_fields.forEach(item => {
+            $('#' + item).attr({'readonly': true, 'disabled': true});
+            $('#' + item).addClass('bg-dark text-secondary');
+        });
+
+        group_checkbox_fields.forEach(item => {
+            $('#' + item).attr({'readonly': true, 'disabled': true});
+        });
+    }
+}
+
+
+// Global timelapse
+$('#TIMELAPSE_ENABLE').on('change', function() {
+    if ($('#TIMELAPSE_ENABLE').prop('checked')) {
+        $('#DAYTIME_TIMELAPSE').prop('checked', true);
+        $('#DAYTIME_TIMELAPSE').removeAttr('readonly disabled');
+    } else {
+        $('#DAYTIME_TIMELAPSE').prop('checked', false);
+        $('#DAYTIME_TIMELAPSE').attr({'readonly': true, 'disabled': true});
+    }
+});
+
+// Daytime timelapse
+$('#DAYTIME_CAPTURE').on('change', function() {
+    if ($('#DAYTIME_CAPTURE').prop('checked')) {
+        $('#DAYTIME_CAPTURE_SAVE').prop('checked', true);
+        $('#DAYTIME_CAPTURE_SAVE').removeAttr('readonly disabled');
+
+        $('#DAYTIME_TIMELAPSE').prop('checked', true);
+        $('#DAYTIME_TIMELAPSE').removeAttr('readonly disabled');
+    } else {
+        $('#DAYTIME_CAPTURE_SAVE').prop('checked', false);
+        $('#DAYTIME_CAPTURE_SAVE').attr({'readonly': true, 'disabled': true});
+
+        $('#DAYTIME_TIMELAPSE').prop('checked', false);
+        $('#DAYTIME_TIMELAPSE').attr({'readonly': true, 'disabled': true});
+    }
+});
+
+$('#DAYTIME_CAPTURE_SAVE').on('change', function() {
+    if ($('#DAYTIME_CAPTURE_SAVE').prop('checked')) {
+        $('#DAYTIME_TIMELAPSE').prop('checked', true);
+        $('#DAYTIME_TIMELAPSE').removeAttr('readonly disabled');
+    } else {
+        $('#DAYTIME_TIMELAPSE').prop('checked', false);
+        $('#DAYTIME_TIMELAPSE').attr({'readonly': true, 'disabled': true});
+    }
+});
+
+
+var group_fields_focus = [
+    'FOCUS_DELAY',
+];
+
+// Focus mode
+group_on_change('FOCUS_MODE', group_fields_focus, []);
+
+
+var group_fields_cooling = [
+    'CCD_TEMP',
+];
+
+// CCD_COOLING
+group_on_change('CCD_COOLING', group_fields_cooling, []);
+
+
+var group_fields_cooling_day = [
+    'CCD_TEMP_DAY',
+];
+
+group_on_change('CCD_COOLING_DAY', group_fields_cooling_day, []);
+
+
+// libcamera AWB
+$('#LIBCAMERA__AWB_ENABLE').on('change', function() {
+    if ($('#LIBCAMERA__AWB_ENABLE').prop('checked')) {
+        $('#LIBCAMERA__CCM_DISABLE').prop('checked', false);
+        $('#LIBCAMERA__CCM_DISABLE').attr({'disabled': true});
+        $('#LIBCAMERA__AWB').removeAttr('readonly disabled');
+        $('#LIBCAMERA__AWB').removeClass('bg-dark text-secondary');
+    } else {
+        $('#LIBCAMERA__CCM_DISABLE').removeAttr('disabled');
+        $('#LIBCAMERA__AWB').attr({'readonly': true, 'disabled': true});
+        $('#LIBCAMERA__AWB').addClass('bg-dark text-secondary');
+    }
+});
+
+$('#LIBCAMERA__AWB_ENABLE_DAY').on('change', function() {
+    if ($('#LIBCAMERA__AWB_ENABLE_DAY').prop('checked')) {
+        $('#LIBCAMERA__CCM_DISABLE_DAY').prop('checked', false);
+        $('#LIBCAMERA__CCM_DISABLE_DAY').attr({'disabled': true});
+        $('#LIBCAMERA__AWB_DAY').removeAttr('readonly disabled');
+        $('#LIBCAMERA__AWB_DAY').removeClass('bg-dark text-secondary');
+    } else {
+        $('#LIBCAMERA__CCM_DISABLE_DAY').removeAttr('disabled');
+        $('#LIBCAMERA__AWB_DAY').attr({'readonly': true, 'disabled': true});
+        $('#LIBCAMERA__AWB_DAY').addClass('bg-dark text-secondary');
+    }
+});
+
+
+var group_fields_st_moonmode = [
+    'STARTRAILS_MOON_ALT_THOLD',
+    'STARTRAILS_MOON_PHASE_THOLD',
+];
+
+// startrails moonmode - custom thresholds are used when moon mode exclusion is OFF
+group_on_change('STARTRAILS_MOONMODE_THOLD', group_fields_st_moonmode, [], true);
+
+
+// nonlocal assets
+$('#WEB_NONLOCAL_IMAGES').on('change', function() {
+    if ($('#WEB_NONLOCAL_IMAGES').prop('checked')) {
+        $('#WEB_LOCAL_IMAGES_ADMIN').removeAttr('disabled');
+    } else {
+        $('#WEB_LOCAL_IMAGES_ADMIN').prop('checked', false);
+        $('#WEB_LOCAL_IMAGES_ADMIN').attr({'disabled': true});
+    }
+});
+
+// cardinal dirs
+$('#CARDINAL_DIRS__ENABLE').on('change', function() {
+    if ($('#CARDINAL_DIRS__ENABLE').prop('checked')) {
+        $('#FISH2PANO__ENABLE_CARDINAL_DIRS').removeAttr('disabled');
+        $('#FISH2PANO__ENABLE_CARDINAL_DIRS').prop('checked', true);
+    } else {
+        $('#FISH2PANO__ENABLE_CARDINAL_DIRS').prop('checked', false);
+        $('#FISH2PANO__ENABLE_CARDINAL_DIRS').attr({'disabled': true});
+    }
+});
+
+// Night color settings
+$('#USE_NIGHT_COLOR').on('change', function() {
+    if ($('#USE_NIGHT_COLOR').prop('checked')) {
+        $('#SCNR_ALGORITHM_DAY').attr({'readonly': true, 'disabled': true});
+        $('#SCNR_ALGORITHM_DAY').addClass('bg-dark text-secondary');
+        $('#SCNR_MTF_MIDTONES_DAY').attr({'readonly': true, 'disabled': true});
+        $('#SCNR_MTF_MIDTONES_DAY').addClass('bg-dark text-secondary');
+        $('#IMAGE_DENOISE_DAY').attr({'readonly': true, 'disabled': true});
+        $('#IMAGE_DENOISE_DAY').addClass('bg-dark text-secondary');
+        $('#IMAGE_DENOISE_STRENGTH_DAY').attr({'readonly': true, 'disabled': true});
+        $('#IMAGE_DENOISE_STRENGTH_DAY').addClass('bg-dark text-secondary');
+        $('#BILATERAL_SIGMA_COLOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#BILATERAL_SIGMA_COLOR_DAY').addClass('bg-dark text-secondary');
+        $('#BILATERAL_SIGMA_SPACE_DAY').attr({'readonly': true, 'disabled': true});
+        $('#BILATERAL_SIGMA_SPACE_DAY').addClass('bg-dark text-secondary');
+        $('#WBR_FACTOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#WBR_FACTOR_DAY').addClass('bg-dark text-secondary');
+        $('#WBG_FACTOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#WBG_FACTOR_DAY').addClass('bg-dark text-secondary');
+        $('#WBB_FACTOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#WBB_FACTOR_DAY').addClass('bg-dark text-secondary');
+        $('#WBR_MTF_MIDTONES_DAY').attr({'readonly': true, 'disabled': true});
+        $('#WBR_MTF_MIDTONES_DAY').addClass('bg-dark text-secondary');
+        $('#WBG_MTF_MIDTONES_DAY').attr({'readonly': true, 'disabled': true});
+        $('#WBG_MTF_MIDTONES_DAY').addClass('bg-dark text-secondary');
+        $('#WBB_MTF_MIDTONES_DAY').attr({'readonly': true, 'disabled': true});
+        $('#WBB_MTF_MIDTONES_DAY').addClass('bg-dark text-secondary');
+        $('#AUTO_WB_DAY').attr({'disabled': true});
+        $('#SATURATION_FACTOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#SATURATION_FACTOR_DAY').addClass('bg-dark text-secondary');
+        $('#GAMMA_CORRECTION_DAY').attr({'readonly': true, 'disabled': true});
+        $('#GAMMA_CORRECTION_DAY').addClass('bg-dark text-secondary');
+        $('#SHARPEN_AMOUNT_DAY').attr({'readonly': true, 'disabled': true});
+        $('#SHARPEN_AMOUNT_DAY').addClass('bg-dark text-secondary');
+    } else {
+        $('#SCNR_ALGORITHM_DAY').removeAttr('readonly disabled');
+        $('#SCNR_ALGORITHM_DAY').removeClass('bg-dark text-secondary');
+        $('#SCNR_MTF_MIDTONES_DAY').removeAttr('readonly disabled');
+        $('#SCNR_MTF_MIDTONES_DAY').removeClass('bg-dark text-secondary');
+        $('#IMAGE_DENOISE_DAY').removeAttr('readonly disabled');
+        $('#IMAGE_DENOISE_DAY').removeClass('bg-dark text-secondary');
+        // re-evaluate denoise day dependent fields based on day dropdown
+        if ($('#IMAGE_DENOISE_DAY').val()) {
+            $('#IMAGE_DENOISE_STRENGTH_DAY').removeAttr('readonly disabled');
+            $('#IMAGE_DENOISE_STRENGTH_DAY').removeClass('bg-dark text-secondary');
+        } else {
+            $('#IMAGE_DENOISE_STRENGTH_DAY').attr({'readonly': true, 'disabled': true});
+            $('#IMAGE_DENOISE_STRENGTH_DAY').addClass('bg-dark text-secondary');
+        }
+        if ($('#IMAGE_DENOISE_DAY').val() === 'bilateral') {
+            $('#BILATERAL_SIGMA_COLOR_DAY').removeAttr('readonly disabled');
+            $('#BILATERAL_SIGMA_COLOR_DAY').removeClass('bg-dark text-secondary');
+            $('#BILATERAL_SIGMA_SPACE_DAY').removeAttr('readonly disabled');
+            $('#BILATERAL_SIGMA_SPACE_DAY').removeClass('bg-dark text-secondary');
+        } else {
+            $('#BILATERAL_SIGMA_COLOR_DAY').attr({'readonly': true, 'disabled': true});
+            $('#BILATERAL_SIGMA_COLOR_DAY').addClass('bg-dark text-secondary');
+            $('#BILATERAL_SIGMA_SPACE_DAY').attr({'readonly': true, 'disabled': true});
+            $('#BILATERAL_SIGMA_SPACE_DAY').addClass('bg-dark text-secondary');
+        }
+        $('#WBR_FACTOR_DAY').removeAttr('readonly disabled');
+        $('#WBR_FACTOR_DAY').removeClass('bg-dark text-secondary');
+        $('#WBG_FACTOR_DAY').removeAttr('readonly disabled');
+        $('#WBG_FACTOR_DAY').removeClass('bg-dark text-secondary');
+        $('#WBB_FACTOR_DAY').removeAttr('readonly disabled');
+        $('#WBB_FACTOR_DAY').removeClass('bg-dark text-secondary');
+        $('#WBR_MTF_MIDTONES_DAY').removeAttr('readonly disabled');
+        $('#WBR_MTF_MIDTONES_DAY').removeClass('bg-dark text-secondary');
+        $('#WBG_MTF_MIDTONES_DAY').removeAttr('readonly disabled');
+        $('#WBG_MTF_MIDTONES_DAY').removeClass('bg-dark text-secondary');
+        $('#WBB_MTF_MIDTONES_DAY').removeAttr('readonly disabled');
+        $('#WBB_MTF_MIDTONES_DAY').removeClass('bg-dark text-secondary');
+        $('#AUTO_WB_DAY').removeAttr('disabled');
+        $('#SATURATION_FACTOR_DAY').removeAttr('readonly disabled');
+        $('#SATURATION_FACTOR_DAY').removeClass('bg-dark text-secondary');
+        $('#GAMMA_CORRECTION_DAY').removeAttr('readonly disabled');
+        $('#GAMMA_CORRECTION_DAY').removeClass('bg-dark text-secondary');
+        $('#SHARPEN_AMOUNT_DAY').removeAttr('readonly disabled');
+        $('#SHARPEN_AMOUNT_DAY').removeClass('bg-dark text-secondary');
+    }
+});
+
+// Star detection method - only the threshold for the active method is editable
+function applyDetectStarsMethod(val) {
+    var $tmpl = $('#DETECT_STARS_THOLD');
+    var $sep = $('#DETECT_STARS_SEP_THOLD').add($('#DETECT_STARS_SEP_MAX_RADIUS'));
+
+    if (val === 'sep') {
+        $tmpl.attr({'readonly': true, 'disabled': true}).addClass('tw:opacity-50 tw:bg-base-300');
+        $sep.removeAttr('readonly disabled').removeClass('tw:opacity-50 tw:bg-base-300');
+    } else {
+        $sep.attr({'readonly': true, 'disabled': true}).addClass('tw:opacity-50 tw:bg-base-300');
+        $tmpl.removeAttr('readonly disabled').removeClass('tw:opacity-50 tw:bg-base-300');
+    }
+}
+
+$('#DETECT_STARS_METHOD').on('change', function() {
+    applyDetectStarsMethod($(this).val());
+});
+
+// Denoise dependent fields - night
+$('#IMAGE_DENOISE').on('change', function() {
+    var val = $(this).val();
+    $('#bilateral-settings').toggle(val === 'bilateral');
+    if (val) {
+        $('#IMAGE_DENOISE_STRENGTH').removeAttr('readonly disabled');
+        $('#IMAGE_DENOISE_STRENGTH').removeClass('bg-dark text-secondary');
+        // Set default to 3 for all methods
+        $('#IMAGE_DENOISE_STRENGTH').val(3);
+    } else {
+        $('#IMAGE_DENOISE_STRENGTH').attr({'readonly': true, 'disabled': true});
+        $('#IMAGE_DENOISE_STRENGTH').addClass('bg-dark text-secondary');
+    }
+    if (val === 'bilateral') {
+        $('#BILATERAL_SIGMA_COLOR').removeAttr('readonly disabled');
+        $('#BILATERAL_SIGMA_COLOR').removeClass('bg-dark text-secondary');
+        $('#BILATERAL_SIGMA_SPACE').removeAttr('readonly disabled');
+        $('#BILATERAL_SIGMA_SPACE').removeClass('bg-dark text-secondary');
+    } else {
+        $('#BILATERAL_SIGMA_COLOR').attr({'readonly': true, 'disabled': true});
+        $('#BILATERAL_SIGMA_COLOR').addClass('bg-dark text-secondary');
+        $('#BILATERAL_SIGMA_SPACE').attr({'readonly': true, 'disabled': true});
+        $('#BILATERAL_SIGMA_SPACE').addClass('bg-dark text-secondary');
+    }
+});
+
+// Denoise dependent fields - day
+$('#IMAGE_DENOISE_DAY').on('change', function() {
+    var val = $(this).val();
+    $('#bilateral-settings-day').toggle(val === 'bilateral');
+    if (val) {
+        $('#IMAGE_DENOISE_STRENGTH_DAY').removeAttr('readonly disabled');
+        $('#IMAGE_DENOISE_STRENGTH_DAY').removeClass('bg-dark text-secondary');
+        // Set default to 3 for all methods
+        $('#IMAGE_DENOISE_STRENGTH_DAY').val(3);
+    } else {
+        $('#IMAGE_DENOISE_STRENGTH_DAY').attr({'readonly': true, 'disabled': true});
+        $('#IMAGE_DENOISE_STRENGTH_DAY').addClass('bg-dark text-secondary');
+    }
+    if (val === 'bilateral') {
+        $('#BILATERAL_SIGMA_COLOR_DAY').removeAttr('readonly disabled');
+        $('#BILATERAL_SIGMA_COLOR_DAY').removeClass('bg-dark text-secondary');
+        $('#BILATERAL_SIGMA_SPACE_DAY').removeAttr('readonly disabled');
+        $('#BILATERAL_SIGMA_SPACE_DAY').removeClass('bg-dark text-secondary');
+    } else {
+        $('#BILATERAL_SIGMA_COLOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#BILATERAL_SIGMA_COLOR_DAY').addClass('bg-dark text-secondary');
+        $('#BILATERAL_SIGMA_SPACE_DAY').attr({'readonly': true, 'disabled': true});
+        $('#BILATERAL_SIGMA_SPACE_DAY').addClass('bg-dark text-secondary');
+    }
+});
+
+
+// Night timelapse settings
+$('#TIMELAPSE__USE_NIGHT_CONFIG').on('change', function() {
+    if ($('#TIMELAPSE__USE_NIGHT_CONFIG').prop('checked')) {
+        $('#TIMELAPSE__PRE_PROCESSOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#TIMELAPSE__PRE_PROCESSOR_DAY').addClass('bg-dark text-secondary');
+        $('#FFMPEG_FRAMERATE_DAY').attr({'readonly': true, 'disabled': true});
+        $('#FFMPEG_FRAMERATE_DAY').addClass('bg-dark text-secondary');
+        $('#FFMPEG_BITRATE_DAY').attr({'readonly': true, 'disabled': true});
+        $('#FFMPEG_BITRATE_DAY').addClass('bg-dark text-secondary');
+        $('#FFMPEG_VFSCALE_DAY').attr({'readonly': true, 'disabled': true});
+        $('#FFMPEG_VFSCALE_DAY').addClass('bg-dark text-secondary');
+        $('#FFMPEG_EXTRA_OPTIONS_DAY').attr({'readonly': true, 'disabled': true});
+        $('#FFMPEG_EXTRA_OPTIONS_DAY').addClass('bg-dark text-secondary');
+    } else {
+        $('#TIMELAPSE__PRE_PROCESSOR_DAY').removeAttr('readonly disabled');
+        $('#TIMELAPSE__PRE_PROCESSOR_DAY').removeClass('bg-dark text-secondary');
+        $('#FFMPEG_FRAMERATE_DAY').removeAttr('readonly disabled');
+        $('#FFMPEG_FRAMERATE_DAY').removeClass('bg-dark text-secondary');
+        $('#FFMPEG_BITRATE_DAY').removeAttr('readonly disabled');
+        $('#FFMPEG_BITRATE_DAY').removeClass('bg-dark text-secondary');
+        $('#FFMPEG_VFSCALE_DAY').removeAttr('readonly disabled');
+        $('#FFMPEG_VFSCALE_DAY').removeClass('bg-dark text-secondary');
+        $('#FFMPEG_EXTRA_OPTIONS_DAY').removeAttr('readonly disabled');
+        $('#FFMPEG_EXTRA_OPTIONS_DAY').removeClass('bg-dark text-secondary');
+    }
+});
+
+
+// Dew Heater thresholds
+$('#DEW_HEATER__THOLD_ENABLE').on('change', function() {
+    if ($('#DEW_HEATER__THOLD_ENABLE').prop('checked')) {
+        $('#DEW_HEATER__LEVEL_DEF').val(0);
+        $('#DEW_HEATER__TEMP_USER_VAR_SLOT').removeAttr('readonly disabled');
+        $('#DEW_HEATER__TEMP_USER_VAR_SLOT').removeClass('bg-dark text-secondary');
+        $('#DEW_HEATER__DEWPOINT_USER_VAR_SLOT').removeAttr('readonly disabled');
+        $('#DEW_HEATER__DEWPOINT_USER_VAR_SLOT').removeClass('bg-dark text-secondary');
+        $('#DEW_HEATER__MANUAL_TARGET').removeAttr('readonly disabled');
+        $('#DEW_HEATER__MANUAL_TARGET').removeClass('bg-dark text-secondary');
+        $('#DEW_HEATER__LEVEL_LOW').removeAttr('readonly disabled');
+        $('#DEW_HEATER__LEVEL_LOW').removeClass('bg-dark text-secondary');
+        $('#DEW_HEATER__LEVEL_MED').removeAttr('readonly disabled');
+        $('#DEW_HEATER__LEVEL_MED').removeClass('bg-dark text-secondary');
+        $('#DEW_HEATER__LEVEL_HIGH').removeAttr('readonly disabled');
+        $('#DEW_HEATER__LEVEL_HIGH').removeClass('bg-dark text-secondary');
+        $('#DEW_HEATER__THOLD_DIFF_LOW').removeAttr('readonly disabled');
+        $('#DEW_HEATER__THOLD_DIFF_LOW').removeClass('bg-dark text-secondary');
+        $('#DEW_HEATER__THOLD_DIFF_MED').removeAttr('readonly disabled');
+        $('#DEW_HEATER__THOLD_DIFF_MED').removeClass('bg-dark text-secondary');
+        $('#DEW_HEATER__THOLD_DIFF_HIGH').removeAttr('readonly disabled');
+        $('#DEW_HEATER__THOLD_DIFF_HIGH').removeClass('bg-dark text-secondary');
+    } else {
+        $('#DEW_HEATER__LEVEL_DEF').val(100);
+        $('#DEW_HEATER__TEMP_USER_VAR_SLOT').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__TEMP_USER_VAR_SLOT').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__DEWPOINT_USER_VAR_SLOT').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__DEWPOINT_USER_VAR_SLOT').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__MANUAL_TARGET').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__MANUAL_TARGET').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__LEVEL_LOW').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__LEVEL_LOW').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__LEVEL_MED').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__LEVEL_MED').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__LEVEL_HIGH').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__LEVEL_HIGH').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__THOLD_DIFF_LOW').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__THOLD_DIFF_LOW').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__THOLD_DIFF_MED').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__THOLD_DIFF_MED').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__THOLD_DIFF_HIGH').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__THOLD_DIFF_HIGH').addClass('bg-dark text-secondary');
+    }
+});
+
+
+// Fan thresholds
+$('#FAN__THOLD_ENABLE').on('change', function() {
+    if ($('#FAN__THOLD_ENABLE').prop('checked')) {
+        $('#FAN__LEVEL_DEF').val(0);
+        $('#FAN__TEMP_USER_VAR_SLOT').removeAttr('readonly disabled');
+        $('#FAN__TEMP_USER_VAR_SLOT').removeClass('bg-dark text-secondary');
+        $('#FAN__TARGET').removeAttr('readonly disabled');
+        $('#FAN__TARGET').removeClass('bg-dark text-secondary');
+        $('#FAN__LEVEL_LOW').removeAttr('readonly disabled');
+        $('#FAN__LEVEL_LOW').removeClass('bg-dark text-secondary');
+        $('#FAN__LEVEL_MED').removeAttr('readonly disabled');
+        $('#FAN__LEVEL_MED').removeClass('bg-dark text-secondary');
+        $('#FAN__LEVEL_HIGH').removeAttr('readonly disabled');
+        $('#FAN__LEVEL_HIGH').removeClass('bg-dark text-secondary');
+        $('#FAN__THOLD_DIFF_LOW').removeAttr('readonly disabled');
+        $('#FAN__THOLD_DIFF_LOW').removeClass('bg-dark text-secondary');
+        $('#FAN__THOLD_DIFF_MED').removeAttr('readonly disabled');
+        $('#FAN__THOLD_DIFF_MED').removeClass('bg-dark text-secondary');
+        $('#FAN__THOLD_DIFF_HIGH').removeAttr('readonly disabled');
+        $('#FAN__THOLD_DIFF_HIGH').removeClass('bg-dark text-secondary');
+    } else {
+        $('#FAN__LEVEL_DEF').val(100);
+        $('#FAN__TEMP_USER_VAR_SLOT').attr({'readonly': true, 'disabled': true});
+        $('#FAN__TEMP_USER_VAR_SLOT').addClass('bg-dark text-secondary');
+        $('#FAN__TARGET').addClass('bg-dark text-secondary');
+        $('#FAN__LEVEL_LOW').attr({'readonly': true, 'disabled': true});
+        $('#FAN__LEVEL_LOW').addClass('bg-dark text-secondary');
+        $('#FAN__LEVEL_MED').attr({'readonly': true, 'disabled': true});
+        $('#FAN__LEVEL_MED').addClass('bg-dark text-secondary');
+        $('#FAN__LEVEL_HIGH').attr({'readonly': true, 'disabled': true});
+        $('#FAN__LEVEL_HIGH').addClass('bg-dark text-secondary');
+        $('#FAN__THOLD_DIFF_LOW').attr({'readonly': true, 'disabled': true});
+        $('#FAN__THOLD_DIFF_LOW').addClass('bg-dark text-secondary');
+        $('#FAN__THOLD_DIFF_MED').attr({'readonly': true, 'disabled': true});
+        $('#FAN__THOLD_DIFF_MED').addClass('bg-dark text-secondary');
+        $('#FAN__THOLD_DIFF_HIGH').attr({'readonly': true, 'disabled': true});
+        $('#FAN__THOLD_DIFF_HIGH').addClass('bg-dark text-secondary');
+    }
+});
+
+
+// The section-based UI keeps all model-specific controls together, while the
+// existing dependency helper preserves their disabled state and saved values.
+var group_fields_asi676mc_repair = [
+    'IMAGE_ASI676MC_REPAIR__PURPLE_RATIO_THRESHOLD',
+    'IMAGE_ASI676MC_REPAIR__RED_SIDE_RATIO_THRESHOLD',
+    'IMAGE_ASI676MC_REPAIR__BLUE_SIDE_RATIO_THRESHOLD',
+    'IMAGE_ASI676MC_REPAIR__SAMPLE_STEP',
+    'IMAGE_ASI676MC_REPAIR__SOURCE_SATURATION_THRESHOLD',
+    'IMAGE_ASI676MC_REPAIR__GAIN_R',
+    'IMAGE_ASI676MC_REPAIR__GAIN_G1',
+    'IMAGE_ASI676MC_REPAIR__GAIN_G2',
+    'IMAGE_ASI676MC_REPAIR__GAIN_B',
+    'IMAGE_ASI676MC_REPAIR__HIGHLIGHT_BLEND_START_RATIO',
+    'IMAGE_ASI676MC_REPAIR__HIGHLIGHT_BLEND_END_RATIO',
+    'IMAGE_ASI676MC_REPAIR__CHUNK_ROWS',
+];
+
+var group_checkbox_fields_asi676mc_repair = [
+    'IMAGE_ASI676MC_REPAIR__EXCLUDE_ONLY',
+    'IMAGE_ASI676MC_REPAIR__LOG_EVERY_FRAME',
+    'IMAGE_ASI676MC_REPAIR__SAVE_DIAGNOSTIC_FITS',
+    'IMAGE_ASI676MC_REPAIR__SAVE_PRECEDING_FITS',
+];
+
+group_on_change(
+    'IMAGE_ASI676MC_REPAIR__ENABLE',
+    group_fields_asi676mc_repair,
+    group_checkbox_fields_asi676mc_repair
+);
+
+// The preceding-frame cache is meaningful only while diagnostic FITS saving
+// is active. Its checked value is retained while the control is disabled.
+function update_asi676mc_preceding_fits_state() {
+    var enable_preceding = (
+        $('#IMAGE_ASI676MC_REPAIR__ENABLE').prop('checked')
+        && $('#IMAGE_ASI676MC_REPAIR__SAVE_DIAGNOSTIC_FITS').prop('checked')
+    );
+    $('#IMAGE_ASI676MC_REPAIR__SAVE_PRECEDING_FITS').prop(
+        'disabled',
+        !enable_preceding
+    );
+}
+
+$('#IMAGE_ASI676MC_REPAIR__ENABLE, #IMAGE_ASI676MC_REPAIR__SAVE_DIAGNOSTIC_FITS').on(
+    'change',
+    update_asi676mc_preceding_fits_state
+);
+
+// Gallery decoration is part of the feature, not an independent preference.
+// Turning the master switch off clears the saved gallery option as well as
+// disabling its control. The gallery view and its data endpoint repeat this
+// master-switch check before showing badges or accepting filters.
+function update_asi676mc_gallery_state() {
+    var repair_enabled = $('#IMAGE_ASI676MC_REPAIR__ENABLE').prop('checked');
+    var gallery_toggle = $('#IMAGE_ASI676MC_REPAIR__GALLERY_ENABLE');
+    if (!repair_enabled) {
+        gallery_toggle.prop('checked', false);
+    }
+    gallery_toggle.prop('disabled', !repair_enabled);
+}
+
+$('#IMAGE_ASI676MC_REPAIR__ENABLE').on(
+    'change',
+    update_asi676mc_gallery_state
+);
+
+// A newly enabled installation starts in detection-only mode. Existing
+// enabled configurations retain the mode the user already selected.
+var asi676mc_repair_was_enabled = $('#IMAGE_ASI676MC_REPAIR__ENABLE').prop('checked');
+$('#IMAGE_ASI676MC_REPAIR__ENABLE').on('change', function() {
+    var repair_enabled = $(this).prop('checked');
+    if (repair_enabled && !asi676mc_repair_was_enabled) {
+        $('#IMAGE_ASI676MC_REPAIR__EXCLUDE_ONLY').prop('checked', true);
+    }
+    asi676mc_repair_was_enabled = repair_enabled;
+});
+
+
+var group_fields_fits = [
+    'IMAGE_SAVE_FITS_PERIOD',
+    'FITSHEADERS__0__KEY',
+    'FITSHEADERS__0__VAL',
+    'FITSHEADERS__1__KEY',
+    'FITSHEADERS__1__VAL',
+    'FITSHEADERS__2__KEY',
+    'FITSHEADERS__2__VAL',
+    'FITSHEADERS__3__KEY',
+    'FITSHEADERS__3__VAL',
+    'FITSHEADERS__4__KEY',
+    'FITSHEADERS__4__VAL',
+];
+
+var group_checkbox_fields_fits = [
+    'IMAGE_SAVE_FITS_PRE_DARK'
+];
+
+
+// FITS
+group_on_change('IMAGE_SAVE_FITS', group_fields_fits, group_checkbox_fields_fits);
+
+
+var group_fields_export = [
+    'IMAGE_EXPORT_FOLDER',
+];
+
+var group_checkbox_fields_export = [
+    'IMAGE_EXPORT_FLIP_V',
+    'IMAGE_EXPORT_FLIP_H',
+];
+
+// Export
+$('#IMAGE_EXPORT_RAW').on('change', function() {
+    if ($('#IMAGE_EXPORT_RAW').val() == '') {
+        group_fields_export.forEach(item => {
+            $('#' + item).attr({'readonly': true, 'disabled': true});
+            $('#' + item).addClass('bg-dark text-secondary');
+        });
+
+        group_checkbox_fields_export.forEach(item => {
+            $('#' + item).attr({'readonly': true, 'disabled': true});
+        });
+    } else {
+        group_fields_export.forEach(item => {
+            $('#' + item).removeAttr('readonly disabled');
+            $('#' + item).removeClass('bg-dark text-secondary');
+        });
+
+        group_checkbox_fields_export.forEach(item => {
+            $('#' + item).removeAttr('readonly disabled');
+        });
+    }
+});
+
+
+var group_fields_image_circle_mask= [
+    'IMAGE_CIRCLE_MASK__DIAMETER',
+    'IMAGE_CIRCLE_MASK__BLUR',
+    'IMAGE_CIRCLE_MASK__OPACITY',
+];
+
+var group_checkbox_fields_image_circle_mask = [
+    'IMAGE_CIRCLE_MASK__OUTLINE'
+];
+
+group_on_change('IMAGE_CIRCLE_MASK__ENABLE', group_fields_image_circle_mask, group_checkbox_fields_image_circle_mask);
+
+
+var group_fields_camera_sqm= [
+    'CAMERA_SQM__EXPOSURE',
+    'CAMERA_SQM__GAIN',
+    'CAMERA_SQM__BINNING',
+    'CAMERA_SQM__EXPOSURE_PERIOD',
+    'CAMERA_SQM__MAGNITUDE_OFFSET',
+];
+
+var group_checkbox_fields_camera_sqm= [
+    'CAMERA_SQM__ENABLE_DAY'
+];
+
+group_on_change('CAMERA_SQM__ENABLE', group_fields_camera_sqm, group_checkbox_fields_camera_sqm);
+
+
+var group_fields_st_timelapse = [
+    'STARTRAILS_TIMELAPSE_MINFRAMES',
+    'STARTRAILS__IMAGE_CIRCLE_MASK_DIAMETER',
+    'STARTRAILS__IMAGE_CIRCLE_MASK_BLUR',
+    'STARTRAILS__IMAGE_CIRCLE_MASK_OPACITY',
+];
+
+var group_checkbox_fields_st_timelapse = [
+    'STARTRAILS__IMAGE_CIRCLE_MASK_ENABLE',
+];
+
+
+group_on_change('STARTRAILS_TIMELAPSE', group_fields_st_timelapse, group_checkbox_fields_st_timelapse);
+
+
+var group_fields_fish2pano = [
+    'FISH2PANO__DIAMETER',
+    'FISH2PANO__ROTATE_ANGLE',
+    'FISH2PANO__SCALE',
+    'FISH2PANO__MODULUS',
+    'FISH2PANO__DIRS_OFFSET_BOTTOM',
+    'FISH2PANO__OPENCV_FONT_SCALE',
+    'FISH2PANO__PIL_FONT_SIZE',
+];
+
+var group_checkbox_fields_fish2pano = [
+    'FISH2PANO__FLIP_H',
+    'FISH2PANO__ENABLE_CARDINAL_DIRS',
+];
+
+group_on_change('FISH2PANO__ENABLE', group_fields_fish2pano, group_checkbox_fields_fish2pano);
+
+
+var group_fields_image_overlay = [
+    'IMAGE_OVERLAY__LOAD_INTERVAL',
+    'IMAGE_OVERLAY__A_URL',
+    'IMAGE_OVERLAY__A_IMAGE_FILE_TYPE',
+    'IMAGE_OVERLAY__A_USERNAME',
+    'IMAGE_OVERLAY__A_PASSWORD',
+    'IMAGE_OVERLAY__A_WIDTH',
+    'IMAGE_OVERLAY__A_HEIGHT',
+    'IMAGE_OVERLAY__A_X',
+    'IMAGE_OVERLAY__A_Y',
+];
+
+var group_checkbox_fields_image_overlay = [];
+
+group_on_change('IMAGE_OVERLAY__ENABLE', group_fields_image_overlay, group_checkbox_fields_image_overlay);
+
+
+var group_fields_circular_display= [
+    'CIRCULAR_DISPLAY__RESOLUTION',
+    'CIRCULAR_DISPLAY__IMAGE_CIRCLE_DIAMETER',
+];
+
+var group_checkbox_fields_circular_display = [];
+
+
+group_on_change('CIRCULAR_DISPLAY__ENABLE', group_fields_circular_display, group_checkbox_fields_circular_display);
+
+
+$( document ).ready(function() {
+    // Star detection method - apply initial state
+    applyDetectStarsMethod($('#DETECT_STARS_METHOD').val());
+
+    // Global timelapse
+    if (!$('#TIMELAPSE_ENABLE').prop('checked')) {
+        $('#DAYTIME_TIMELAPSE').attr({'readonly': true, 'disabled': true});
+    }
+
+    // Daytime timelapse
+    if (!$('#DAYTIME_CAPTURE').prop('checked')) {
+        $('#DAYTIME_CAPTURE_SAVE').attr({'readonly': true, 'disabled': true});
+        $('#DAYTIME_TIMELAPSE').attr({'readonly': true, 'disabled': true});
+    }
+
+    if (!$('#DAYTIME_CAPTURE_SAVE').prop('checked')) {
+        $('#DAYTIME_TIMELAPSE').attr({'readonly': true, 'disabled': true});
+    }
+
+    // FOCUS_MODE
+    group_on_ready('FOCUS_MODE', group_fields_focus, []);
+
+    // CCD_COOLING
+    group_on_ready('CCD_COOLING', group_fields_cooling, []);
+    group_on_ready('CCD_COOLING_DAY', group_fields_cooling_day, []);
+
+
+    // libcamera AWB
+    if ($('#LIBCAMERA__AWB_ENABLE').prop('checked')) {
+        $('#LIBCAMERA__CCM_DISABLE').prop('checked', false);
+        $('#LIBCAMERA__CCM_DISABLE').attr({'disabled': true});
+    } else {
+        $('#LIBCAMERA__AWB').attr({'readonly': true, 'disabled': true});
+        $('#LIBCAMERA__AWB').addClass('bg-dark text-secondary');
+    }
+
+    if ($('#LIBCAMERA__AWB_ENABLE_DAY').prop('checked')) {
+        $('#LIBCAMERA__CCM_DISABLE_DAY').prop('checked', false);
+        $('#LIBCAMERA__CCM_DISABLE_DAY').attr({'disabled': true});
+    } else {
+        $('#LIBCAMERA__AWB_DAY').attr({'readonly': true, 'disabled': true});
+        $('#LIBCAMERA__AWB_DAY').addClass('bg-dark text-secondary');
+    }
+
+
+    // startrails moonmode
+    group_on_ready('STARTRAILS_MOONMODE_THOLD', group_fields_st_moonmode, [], true);
+
+
+    // nonlocal assets
+    if (!$('#WEB_NONLOCAL_IMAGES').prop('checked')) {
+        $('#WEB_LOCAL_IMAGES_ADMIN').attr({'disabled': true});
+    }
+
+    // cardinal dirs
+    if (!$('#CARDINAL_DIRS__ENABLE').prop('checked')) {
+        $('#FISH2PANO__ENABLE_CARDINAL_DIRS').attr({'disabled': true});
+    }
+
+    // Night color settings
+    if ($('#USE_NIGHT_COLOR').prop('checked')) {
+        $('#SCNR_ALGORITHM_DAY').attr({'readonly': true, 'disabled': true});
+        $('#SCNR_ALGORITHM_DAY').addClass('bg-dark text-secondary');
+        $('#SCNR_MTF_MIDTONES_DAY').attr({'readonly': true, 'disabled': true});
+        $('#SCNR_MTF_MIDTONES_DAY').addClass('bg-dark text-secondary');
+        $('#IMAGE_DENOISE_DAY').attr({'readonly': true, 'disabled': true});
+        $('#IMAGE_DENOISE_DAY').addClass('bg-dark text-secondary');
+        $('#IMAGE_DENOISE_STRENGTH_DAY').attr({'readonly': true, 'disabled': true});
+        $('#IMAGE_DENOISE_STRENGTH_DAY').addClass('bg-dark text-secondary');
+        $('#BILATERAL_SIGMA_COLOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#BILATERAL_SIGMA_COLOR_DAY').addClass('bg-dark text-secondary');
+        $('#BILATERAL_SIGMA_SPACE_DAY').attr({'readonly': true, 'disabled': true});
+        $('#BILATERAL_SIGMA_SPACE_DAY').addClass('bg-dark text-secondary');
+        $('#WBR_FACTOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#WBR_FACTOR_DAY').addClass('bg-dark text-secondary');
+        $('#WBG_FACTOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#WBG_FACTOR_DAY').addClass('bg-dark text-secondary');
+        $('#WBB_FACTOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#WBB_FACTOR_DAY').addClass('bg-dark text-secondary');
+        $('#WBR_MTF_MIDTONES_DAY').attr({'readonly': true, 'disabled': true});
+        $('#WBR_MTF_MIDTONES_DAY').addClass('bg-dark text-secondary');
+        $('#WBG_MTF_MIDTONES_DAY').attr({'readonly': true, 'disabled': true});
+        $('#WBG_MTF_MIDTONES_DAY').addClass('bg-dark text-secondary');
+        $('#WBB_MTF_MIDTONES_DAY').attr({'readonly': true, 'disabled': true});
+        $('#WBB_MTF_MIDTONES_DAY').addClass('bg-dark text-secondary');
+        $('#AUTO_WB_DAY').attr({'disabled': true});
+        $('#SATURATION_FACTOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#SATURATION_FACTOR_DAY').addClass('bg-dark text-secondary');
+        $('#GAMMA_CORRECTION_DAY').attr({'readonly': true, 'disabled': true});
+        $('#GAMMA_CORRECTION_DAY').addClass('bg-dark text-secondary');
+        $('#SHARPEN_AMOUNT_DAY').attr({'readonly': true, 'disabled': true});
+        $('#SHARPEN_AMOUNT_DAY').addClass('bg-dark text-secondary');
+    }
+
+    // Denoise dependent fields - grey out on page load (night)
+    $('#bilateral-settings').toggle($('#IMAGE_DENOISE').val() === 'bilateral');
+    if (!$('#IMAGE_DENOISE').val()) {
+        $('#IMAGE_DENOISE_STRENGTH').attr({'readonly': true, 'disabled': true});
+        $('#IMAGE_DENOISE_STRENGTH').addClass('bg-dark text-secondary');
+    }
+    if ($('#IMAGE_DENOISE').val() !== 'bilateral') {
+        $('#BILATERAL_SIGMA_COLOR').attr({'readonly': true, 'disabled': true});
+        $('#BILATERAL_SIGMA_COLOR').addClass('bg-dark text-secondary');
+        $('#BILATERAL_SIGMA_SPACE').attr({'readonly': true, 'disabled': true});
+        $('#BILATERAL_SIGMA_SPACE').addClass('bg-dark text-secondary');
+    }
+
+    // Denoise dependent fields - grey out on page load (day)
+    $('#bilateral-settings-day').toggle($('#IMAGE_DENOISE_DAY').val() === 'bilateral');
+    if (!$('#IMAGE_DENOISE_DAY').val() || $('#USE_NIGHT_COLOR').prop('checked')) {
+        $('#IMAGE_DENOISE_STRENGTH_DAY').attr({'readonly': true, 'disabled': true});
+        $('#IMAGE_DENOISE_STRENGTH_DAY').addClass('bg-dark text-secondary');
+    }
+    if ($('#IMAGE_DENOISE_DAY').val() !== 'bilateral' || $('#USE_NIGHT_COLOR').prop('checked')) {
+        $('#BILATERAL_SIGMA_COLOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#BILATERAL_SIGMA_COLOR_DAY').addClass('bg-dark text-secondary');
+        $('#BILATERAL_SIGMA_SPACE_DAY').attr({'readonly': true, 'disabled': true});
+        $('#BILATERAL_SIGMA_SPACE_DAY').addClass('bg-dark text-secondary');
+    }
+
+    // Night timelapse settings
+    if ($('#TIMELAPSE__USE_NIGHT_CONFIG').prop('checked')) {
+        $('#TIMELAPSE__PRE_PROCESSOR_DAY').attr({'readonly': true, 'disabled': true});
+        $('#TIMELAPSE__PRE_PROCESSOR_DAY').addClass('bg-dark text-secondary');
+        $('#FFMPEG_FRAMERATE_DAY').attr({'readonly': true, 'disabled': true});
+        $('#FFMPEG_FRAMERATE_DAY').addClass('bg-dark text-secondary');
+        $('#FFMPEG_BITRATE_DAY').attr({'readonly': true, 'disabled': true});
+        $('#FFMPEG_BITRATE_DAY').addClass('bg-dark text-secondary');
+        $('#FFMPEG_VFSCALE_DAY').attr({'readonly': true, 'disabled': true});
+        $('#FFMPEG_VFSCALE_DAY').addClass('bg-dark text-secondary');
+        $('#FFMPEG_EXTRA_OPTIONS_DAY').attr({'readonly': true, 'disabled': true});
+        $('#FFMPEG_EXTRA_OPTIONS_DAY').addClass('bg-dark text-secondary');
+    }
+
+    // Dew Heater thresholds
+    if (!$('#DEW_HEATER__THOLD_ENABLE').prop('checked')) {
+        $('#DEW_HEATER__TEMP_USER_VAR_SLOT').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__TEMP_USER_VAR_SLOT').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__DEWPOINT_USER_VAR_SLOT').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__DEWPOINT_USER_VAR_SLOT').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__MANUAL_TARGET').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__MANUAL_TARGET').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__LEVEL_LOW').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__LEVEL_LOW').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__LEVEL_MED').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__LEVEL_MED').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__LEVEL_HIGH').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__LEVEL_HIGH').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__THOLD_DIFF_LOW').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__THOLD_DIFF_LOW').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__THOLD_DIFF_MED').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__THOLD_DIFF_MED').addClass('bg-dark text-secondary');
+        $('#DEW_HEATER__THOLD_DIFF_HIGH').attr({'readonly': true, 'disabled': true});
+        $('#DEW_HEATER__THOLD_DIFF_HIGH').addClass('bg-dark text-secondary');
+    }
+
+    // Fan thresholds
+    if (!$('#FAN__THOLD_ENABLE').prop('checked')) {
+        $('#FAN__TEMP_USER_VAR_SLOT').attr({'readonly': true, 'disabled': true});
+        $('#FAN__TEMP_USER_VAR_SLOT').addClass('bg-dark text-secondary');
+        $('#FAN__TARGET').attr({'readonly': true, 'disabled': true});
+        $('#FAN__TARGET').attr('disabled', true);
+        $('#FAN__TARGET').addClass('bg-dark text-secondary');
+        $('#FAN__LEVEL_LOW').attr({'readonly': true, 'disabled': true});
+        $('#FAN__LEVEL_LOW').addClass('bg-dark text-secondary');
+        $('#FAN__LEVEL_MED').attr({'readonly': true, 'disabled': true});
+        $('#FAN__LEVEL_MED').addClass('bg-dark text-secondary');
+        $('#FAN__LEVEL_HIGH').attr({'readonly': true, 'disabled': true});
+        $('#FAN__LEVEL_HIGH').addClass('bg-dark text-secondary');
+        $('#FAN__THOLD_DIFF_LOW').attr({'readonly': true, 'disabled': true});
+        $('#FAN__THOLD_DIFF_LOW').addClass('bg-dark text-secondary');
+        $('#FAN__THOLD_DIFF_MED').attr({'readonly': true, 'disabled': true});
+        $('#FAN__THOLD_DIFF_MED').addClass('bg-dark text-secondary');
+        $('#FAN__THOLD_DIFF_HIGH').attr({'readonly': true, 'disabled': true});
+        $('#FAN__THOLD_DIFF_HIGH').addClass('bg-dark text-secondary');
+    }
+
+
+    if ($('#IMAGE_EXPORT_RAW').val() == '') {
+        group_fields_export.forEach(item => {
+            $('#' + item).attr({'readonly': true, 'disabled': true});
+            $('#' + item).addClass('bg-dark text-secondary');
+        });
+
+        group_checkbox_fields_export.forEach(item => {
+            $('#' + item).attr({'readonly': true, 'disabled': true});
+        });
+    }
+
+
+    group_on_ready(
+        'IMAGE_ASI676MC_REPAIR__ENABLE',
+        group_fields_asi676mc_repair,
+        group_checkbox_fields_asi676mc_repair
+    );
+    update_asi676mc_gallery_state();
+    update_asi676mc_preceding_fits_state();
+    group_on_ready('IMAGE_SAVE_FITS', group_fields_fits, group_checkbox_fields_fits);
+    group_on_ready('IMAGE_CIRCLE_MASK__ENABLE', group_fields_image_circle_mask, group_checkbox_fields_image_circle_mask);
+    group_on_ready('CAMERA_SQM__ENABLE', group_fields_camera_sqm, group_checkbox_fields_camera_sqm);
+    group_on_ready('STARTRAILS_TIMELAPSE', group_fields_st_timelapse, group_checkbox_fields_st_timelapse);
+    group_on_ready('FISH2PANO__ENABLE', group_fields_fish2pano, group_checkbox_fields_fish2pano);
+    group_on_ready('IMAGE_OVERLAY__ENABLE', group_fields_image_overlay, group_checkbox_fields_image_overlay);
+    group_on_ready('CIRCULAR_DISPLAY__ENABLE', group_fields_circular_display, group_checkbox_fields_circular_display);
+
+    // Show FC-37 settings when any sensor slot has FC-37 selected
+    function updateFc37ActiveLowState() {
+        const fc37Selected = $('[id^="TEMP_SENSOR__"][id$="_CLASSNAME"]').toArray().some(function(element) {
+            return element.value === 'blinka_rain_sensor_fc37';
+        });
+        const $toggle = $('#TEMP_SENSOR__FC37_ACTIVE_LOW');
+        $toggle.prop('disabled', !fc37Selected);
+        $('#fc37-sensor-settings').toggle(fc37Selected);
+    }
+
+    $('[id^="TEMP_SENSOR__"][id$="_CLASSNAME"]').on('change', updateFc37ActiveLowState);
+
+    updateFc37ActiveLowState();
+
+    function updateRainSensorI2cState() {
+        ['A', 'B', 'C', 'D', 'E', 'F'].forEach(function(letter) {
+            const prefix = 'TEMP_SENSOR__' + letter;
+            const classname = $('#' + prefix + '_CLASSNAME').val();
+            const gpioSensor = ['blinka_rain_sensor_fc37', 'blinka_rain_sensor_wh_sp_rg'].includes(classname);
+            const $address = $('#' + prefix + '_I2C_ADDRESS');
+            $address.prop('disabled', gpioSensor);
+            $address.toggleClass('bg-dark text-secondary', gpioSensor);
+        });
+    }
+
+    $('#TEMP_SENSOR__A_CLASSNAME, #TEMP_SENSOR__B_CLASSNAME, #TEMP_SENSOR__C_CLASSNAME, #TEMP_SENSOR__D_CLASSNAME, #TEMP_SENSOR__E_CLASSNAME, #TEMP_SENSOR__F_CLASSNAME').on('change', updateRainSensorI2cState);
+    updateRainSensorI2cState();
+
+
+    // Open the camera settings accordion section that matches the selected
+    // CAMERA_INTERFACE value, both on page load and when the selection changes.
+    // Also shows/hides the MQTT sub-section inside libcamera Settings, which is
+    // only relevant when an mqtt_* interface is selected.
+    function cameraInterfaceAccordion(interfaceValue) {
+        let toggleId;
+        if (interfaceValue.startsWith('libcamera_') || interfaceValue.startsWith('mqtt_')) {
+            toggleId = 'collapseLibcamera-toggle';
+        } else if (interfaceValue === 'pycurl_camera') {
+            toggleId = 'collapsePycurl-toggle';
+        } else if (interfaceValue.startsWith('test_')) {
+            toggleId = 'collapseTestCamera-toggle';
+        } else {
+            toggleId = 'collapseIndi-toggle';
+        }
+        const el = document.getElementById(toggleId);
+        if (el) {
+            el.checked = true;
+        }
+
+        const mqttFields = document.getElementById('libcamera-mqtt-fields');
+        if (mqttFields) {
+            mqttFields.style.display = interfaceValue.startsWith('mqtt_') ? '' : 'none';
+        }
+    }
+
+    const cameraInterfaceSelect = document.getElementById('CAMERA_INTERFACE');
+    if (cameraInterfaceSelect) {
+        cameraInterfaceAccordion(cameraInterfaceSelect.value);
+        cameraInterfaceSelect.addEventListener('change', function() {
+            cameraInterfaceAccordion(this.value);
+        });
+    }
+});  // end $(document).ready
+
+</script>
+
+{% endblock %}
