@@ -1,0 +1,145 @@
+# ==============================================================================
+# indi-allsky-edge Integration Manifest
+#
+# Declarative manifest defining the topic branches and pull requests to be
+# aggregated onto upstream/main to form the bleeding-edge distribution.
+# All items are attempted sequentially; clean merges are integrated, and
+# any merge conflicts are logged and skipped without breaking the build.
+# ==============================================================================
+
+version: 1
+upstream:
+  repo: "aaronwmorris/indi-allsky"
+  default_branch: "main"
+
+package:
+  name: "indi-allsky-edge"
+  description: "All-sky camera software based on INDI and Flask (Community Bleeding Edge)"
+  section: "science"
+  priority: "optional"
+
+# ------------------------------------------------------------------------------
+# Pull Requests (Integrated in sequential order)
+# ------------------------------------------------------------------------------
+pull_requests:
+  # --- Core Stability, Security, and WTForms Compatibility ---
+  - id: 3322
+    title: "fix: ensure form choice options are tuples for WTForms 3.2+ compatibility"
+    author: "TN-1"
+
+  - id: 3321
+    title: "fix(sensors): handle TSL2561 and TSL2591 out-of-range readings"
+    author: "TN-1"
+
+  - id: 3317
+    title: "fix: prevent SensorWorker crash on missing Ecowitt outdoor data"
+    author: "TN-1"
+
+  - id: 3316
+    title: "fix: respect configured image file type in allsky-map ping"
+    author: "TN-1"
+
+  - id: 3315
+    title: "Fix Support Info generation failing when configuration contains Unicode characters"
+    author: "nicoloserafino"
+
+  - id: 3309
+    title: "Fix: Local camera freshness after DST changes"
+    author: "321MathiasS123"
+
+  - id: 3305
+    title: "Fix: Logging in darks.py"
+    author: "TN-1"
+
+  - id: 3302
+    title: "fix(mdns): Harden mDNS hostname's and certificate SAN's"
+    author: "TN-1"
+
+  # --- UI, Sensor & Visualization Enhancements ---
+  - id: 3298
+    title: "Fix: chart resizing at fractional browser zoom"
+    author: "321MathiasS123"
+
+  - id: 3292
+    title: "Bilateral controls and help text stay hidden until Bilateral is selected"
+    author: "ikeysolomon"
+
+  - id: 3290
+    title: "WH-SP-RG - Tipping bucket rain gauge"
+    author: "ikeysolomon"
+
+  - id: 3272
+    title: "Send *_complete events once the file is written"
+    author: "chrisramsay"
+
+  - id: 3257
+    title: "Feature: Chart tab enhancement, adds overlaid configurable charts"
+    author: "ikeysolomon"
+
+  - id: 3251
+    title: "FC-37 inverse control and help text stay hidden until FC-37 is selected"
+    author: "ikeysolomon"
+
+  - id: 3225
+    title: "Feature: Gallery panorama overlay"
+    author: "321MathiasS123"
+
+  - id: 3201
+    title: "Support automatic VirtualSky mirroring"
+    author: "321MathiasS123"
+
+  - id: 3009
+    title: "fix: don't crash charts endpoint when detection mask size doesn't match image"
+    author: "DeepakJaggupalli"
+
+  # --- Infrastructure, Automation & Features ---
+  - id: 3323
+    title: "testing: harden qa script: verify authenticated web route rendering and live WSGI socket binding"
+    author: "TN-1"
+
+  - id: 3318
+    title: "refactor: streamline stylesheet architecture"
+    author: "TN-1"
+
+  - id: 3289
+    title: "feat(github): add structured issue forms"
+    author: "TN-1"
+
+  - id: 3283
+    title: "Add allsky-map.com integration section and screenshot to README"
+    author: "TN-1"
+
+  - id: 3280
+    title: "Add setting to disable smoke data checking and reporting"
+    author: "TN-1"
+
+  - id: 3231
+    title: "Feature: Add Model Context Protocol (MCP) server for AI agent integration"
+    author: "TN-1"
+
+  - id: 3134
+    title: "Feature: Docker Stack Rewrite"
+    author: "TN-1"
+
+  - id: 3049
+    title: "Feature: Adds script to generate screenshots"
+    author: "TN-1"
+
+  # --- Large Subsystem Enhancements (Reconciled on Edge) ---
+  - id: 3265
+    title: "Support sensor devices A-Z with a progressive Add sensor UI"
+    author: "ikeysolomon"
+
+  - id: 3112
+    title: "Feature: Dark library builder and dark management in the UI"
+    author: "321MathiasS123"
+
+# ------------------------------------------------------------------------------
+# External Branches (Branches not yet submitted or pending upstream PR)
+# ------------------------------------------------------------------------------
+external_refs: []
+
+# ------------------------------------------------------------------------------
+# Reconciliation Glue Patches (Applied if specific PR combinations conflict)
+# ------------------------------------------------------------------------------
+reconciliation_patches: []

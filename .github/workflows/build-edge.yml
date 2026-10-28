@@ -1,0 +1,149 @@
+name: Synthesize & Build Bleeding Edge Release (indi-allsky-edge)
+
+on:
+  schedule:
+    # Nightly compilation at 02:00 UTC
+    - cron: '0 2 * * *'
+  push:
+    branches:
+      - main
+    paths:
+      - 'manifest.yaml'
+      - 'rebuild.py'
+      - 'rr-cache/**'
+  workflow_dispatch:
+    inputs:
+      force_push:
+        description: 'Force push edge branch even if identical'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  PACKAGE_NAME: 'indi-allsky-edge'
+  INDI_CORE_TAG: 'v2.2.4.2'
+  INDI_3RDPARTY_TAG: 'v2.2.4.1'
+
+jobs:
+  # ============================================================================
+  # Stage 1: Synthesize Ephemeral Edge Branch
+  # ============================================================================
+  synthesize-edge:
+    name: Synthesize Edge Branch
+    runs-on: ubuntu-latest
+    outputs:
+      edge_sha: ${{ steps.synthesize.outputs.edge_sha }}
+    steps:
+      - name: Checkout Orchestration Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install pyyaml
+
+      - name: Configure Git Identity
+        run: |
+          git config --global user.name "indi-allsky-edge CI"
+          git config --global user.email "ci@indi-allsky-edge.internal"
+
+      - name: Run Rebuild Engine
+        id: synthesize
+        run: |
+          python3 rebuild.py --workspace workspace --target-branch edge
+
+          cd workspace
+          EDGE_SHA=$(git rev-parse HEAD)
+          echo "edge_sha=${EDGE_SHA}" >> $GITHUB_OUTPUT
+          
+          # Push synthesized edge branch to this repository
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git push --force-with-lease origin edge
+
+      - name: Commit Updated Rerere Resolutions (if any recorded)
+        run: |
+          if [ -n "$(git status --porcelain rr-cache/)" ]; then
+            git add rr-cache/
+            git commit -m "chore(rerere): update recorded resolutions from build run"
+            git push origin main
+          fi
+
+  # ============================================================================
+  # Stage 2: Matrix Package Compilation & QA
+  # ============================================================================
+  build-deb:
+    name: Build .deb (${{ matrix.distro }} / ${{ matrix.arch }})
+    needs: [synthesize-edge]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [bookworm, noble, resolute, trixie]
+        arch: [amd64, arm64]
+        include:
+          - distro: bookworm
+            image: debian:bookworm
+          - distro: noble
+            image: ubuntu:noble
+          - distro: resolute
+            image: ubuntu:resolute
+          - distro: trixie
+            image: debian:trixie
+
+    steps:
+      - name: Checkout Synthesized Edge Branch
+        uses: actions/checkout@v4
+        with:
+          ref: edge
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Package .deb
+        run: |
+          echo "Building ${{ env.PACKAGE_NAME }} for ${{ matrix.distro }} (${{ matrix.arch }})..."
+          # Invokes standard package construction tooling
+          docker run --rm \
+            -v "$PWD":/work \
+            -w /work \
+            -e DEBIAN_FRONTEND=noninteractive \
+            ${{ matrix.image }} \
+            bash -c "
+              apt-get update && \
+              apt-get -y install build-essential debhelper devscripts python3-all && \
+              dpkg-buildpackage -us -uc -b
+            "
+
+      - name: Execute Containerized QA Validation
+        run: |
+          DEB_FILE=\$(ls ../${{ env.PACKAGE_NAME }}_*.deb 2>/dev/null | head -n 1 || true)
+          if [ -f "\$DEB_FILE" ]; then
+            echo "Running QA validation on \$DEB_FILE..."
+            # Execute debian/tests/qa_test.sh inside clean test container
+            docker run --rm \
+              -v "$PWD":/work \
+              -v "\$PWD/..":/pkg \
+              -w /work \
+              ${{ matrix.image }} \
+              bash -c "
+                apt-get update && \
+                apt-get -y install /pkg/\$(basename \$DEB_FILE) && \
+                bash debian/tests/qa_test.sh
+              "
+          fi
+
+      - name: Upload .deb Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}-${{ matrix.distro }}-${{ matrix.arch }}
+          path: ../${{ env.PACKAGE_NAME }}_*.deb

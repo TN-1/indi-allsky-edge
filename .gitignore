@@ -1,0 +1,28 @@
+# Git ignore for indi-allsky-edge orchestration repository
+
+# Ephemeral build workspace
+workspace/
+build/
+dist/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# Debian packaging artifacts
+*.deb
+*.buildinfo
+*.changes
+*.tar.*
+*.dsc
+
+# System / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
