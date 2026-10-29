@@ -1,5 +1,5 @@
 diff --git a/.github/workflows/package-deb.yml b/.github/workflows/package-deb.yml
-index 89711ab..79d5b27 100644
+index 89711ab..53cac8b 100644
 --- a/.github/workflows/package-deb.yml
 +++ b/.github/workflows/package-deb.yml
 @@ -2,11 +2,10 @@ name: Build & Package Debian Release (.deb)
@@ -23,7 +23,7 @@ index 89711ab..79d5b27 100644
 -          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
 -            echo "Tag pushed, forcing build."
 +          if [ "${{ github.event_name }}" == "push" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
-+            echo "Push, workflow_dispatch, or tag event, forcing build."
++            echo "Push or manual event, forcing build."
              echo "should_build=true" >> $GITHUB_OUTPUT
            else
              LATEST_COMMIT=$(git rev-parse HEAD)
@@ -75,7 +75,14 @@ index 89711ab..79d5b27 100644
      steps:
        - name: Checkout Code
          uses: actions/checkout@v7
-@@ -417,18 +422,18 @@ jobs:
+@@ -412,23 +417,23 @@ jobs:
+         env:
+           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+ 
+-      - name: Prune Stale Nightly Assets & Publish Release
+-        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/v') && !startsWith(github.ref, 'refs/tags/indi_v'))
++      - name: Prune Stale Edge Assets & Publish Release
++        if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
          env:
            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
          run: |
