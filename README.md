@@ -32,25 +32,25 @@ Replaces: indi-allsky
 
 ### Installation
 
-#### Method 1: APT Repository (Recommended)
+Debian packages (`.deb`) are compiled and published automatically to the rolling [Bleeding Edge GitHub Release](https://github.com/TN-1/indi-allsky-edge/releases/tag/edge) across all supported distributions and architectures.
 
-```bash
-# Add the indi-allsky-edge APT component
-sudo curl -fsSL https://tn-1.github.io/apt/KEY.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/indi-allsky-edge.gpg
-echo "deb [signed-by=/etc/apt/keyrings/indi-allsky-edge.gpg] https://tn-1.github.io/apt edge main" | sudo tee /etc/apt/sources.list.d/indi-allsky-edge.list
+#### Direct `.deb` Installation
 
-sudo apt update
-sudo apt install indi-allsky-edge
-```
+1. Navigate to [GitHub Releases (`edge`)](https://github.com/TN-1/indi-allsky-edge/releases/tag/edge).
+2. Download the package built for your distribution and hardware architecture:
+   * **Debian 12 (Bookworm)**: `indi-allsky-edge_*+bookworm_{amd64,arm64}.deb`
+   * **Debian 13 (Trixie)**: `indi-allsky-edge_*+trixie_{amd64,arm64}.deb`
+   * **Ubuntu 24.04 (Noble)**: `indi-allsky-edge_*+noble_{amd64,arm64}.deb`
+   * **Ubuntu 26.04 (Resolute)**: `indi-allsky-edge_*+resolute_{amd64,arm64}.deb`
 
-#### Method 2: Direct .deb Installation
-
-Download the latest `.deb` for your architecture from [GitHub Releases](https://github.com/TN-1/indi-allsky-edge/releases/tag/edge-latest) and install via dpkg:
+3. Install the downloaded package using `apt`, which will automatically resolve and install all underlying dependencies:
 
 ```bash
 sudo apt update
-sudo apt install ./indi-allsky-edge_*+trixie_arm64.deb
+sudo apt install ./indi-allsky-edge_*+<distro>_<arch>.deb
 ```
+
+*(Note: Direct APT repository hosting is currently disabled during this initial validation phase. Distribution is conducted exclusively via GitHub Releases.)*
 
 ---
 
