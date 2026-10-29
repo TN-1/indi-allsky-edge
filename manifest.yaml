@@ -142,4 +142,6 @@ external_refs: []
 # ------------------------------------------------------------------------------
 # Reconciliation Glue Patches (Applied if specific PR combinations conflict)
 # ------------------------------------------------------------------------------
-reconciliation_patches: []
+reconciliation_patches:
+  - file: "patches/01-edge-packaging.patch"
+    description: "Configure indi-allsky-edge package identity and packaging workflow"

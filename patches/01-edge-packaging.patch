@@ -1,0 +1,130 @@
+diff --git a/.github/workflows/package-deb.yml b/.github/workflows/package-deb.yml
+index 50a777b0..ca95e4ce 100644
+--- a/.github/workflows/package-deb.yml
++++ b/.github/workflows/package-deb.yml
+@@ -101,8 +101,8 @@ jobs:
+             # Nightly / Dev Build -> Nightly
+             DATE_STAMP=$(date +'%Y%m%d.%H%M')
+             BASE_VER=$(python3 misc/bump_version.py --show | awk '{print $NF}')
+-            VERSION="${BASE_VER}~nightly.${DATE_STAMP}"
+-            SUITE="nightly"
++            VERSION="${BASE_VER}~edge.${DATE_STAMP}"
++            SUITE="edge"
+             IS_RELEASE="false"
+           fi
+ 
+diff --git a/debian/control b/debian/control
+index fa1c99da..3c946a4b 100644
+--- a/debian/control
++++ b/debian/control
+@@ -15,7 +15,7 @@ Build-Depends: debhelper-compat (= 13),
+ Standards-Version: 4.6.2
+ Homepage: https://github.com/aaronwmorris/indi-allsky
+ 
+-Package: indi-allsky
++Package: indi-allsky-edge
+ Architecture: any
+ Depends: ${misc:Depends},
+  python3 (>= 3.9),
+@@ -52,9 +52,10 @@ Suggests: mosquitto,
+  gpsd,
+  udiskie,
+  gsc
++Conflicts: indi-allsky
+ Breaks: indi-allsky-web (<< ${binary:Version})
+-Replaces: indi-allsky-web (<< ${binary:Version})
+-Provides: indi-allsky-web (= ${binary:Version})
++Replaces: indi-allsky, indi-allsky-web (<< ${binary:Version})
++Provides: indi-allsky (= ${binary:Version}), indi-allsky-web (= ${binary:Version})
+ Description: Allsky camera software using INDI framework and Flask web UI
+  indi-allsky is a complete solution for operating an allsky camera using the
+  INDI library framework for camera control, keogram generation, startrail
+diff --git a/debian/rules b/debian/rules
+index 4a35ece5..c11538f8 100755
+--- a/debian/rules
++++ b/debian/rules
+@@ -1,5 +1,19 @@
+ #!/usr/bin/make -f
+ 
++# Debhelper maps debian/<pkg>.* files to the declared binary package name.
++# Mirror debian/indi-allsky.* for downstream variants (e.g. indi-allsky-edge).
++ifneq ($(filter clean, $(MAKECMDGOALS)), clean)
++$(shell \
++	PKG=$$(grep -m1 '^Package:' debian/control | awk '{print $$2}'); \
++	if [ -n "$$PKG" ] && [ "$$PKG" != "indi-allsky" ]; then \
++		for f in debian/indi-allsky.*; do \
++			ext="$${f#debian/indi-allsky.}"; \
++			[ ! -e "debian/$${PKG}.$${ext}" ] && cp -a "$$f" "debian/$${PKG}.$${ext}"; \
++		done; \
++	fi \
++)
++endif
++
+ %:
+ 	dh $@
+ 
+@@ -63,8 +77,12 @@ override_dh_installsystemd:
+ 
+ override_dh_fixperms:
+ 	dh_fixperms
+-	chmod 440 debian/indi-allsky/etc/sudoers.d/indi-allsky 2>/dev/null || true
++	chmod 440 debian/*/etc/sudoers.d/indi-allsky 2>/dev/null || true
+ 
+ override_dh_auto_clean:
+ 	rm -rf debian/venv debian/bundle debian/wheels
++	@PKG=$$(grep -m1 '^Package:' debian/control | awk '{print $$2}'); \
++	if [ -n "$$PKG" ] && [ "$$PKG" != "indi-allsky" ]; then \
++		rm -f debian/$${PKG}.*; \
++	fi
+ 	dh_auto_clean
+diff --git a/debian/tests/qa_test.sh b/debian/tests/qa_test.sh
+index 7a1a6784..3e982b55 100755
+--- a/debian/tests/qa_test.sh
++++ b/debian/tests/qa_test.sh
+@@ -11,6 +11,12 @@ indi-allsky indi-allsky/elevation string 50
+ indi-allsky indi-allsky/web_user string admin
+ indi-allsky indi-allsky/web_pass password testpassword123
+ indi-allsky indi-allsky/web_pass_confirm password testpassword123
++indi-allsky-edge indi-allsky/latitude string -34.9285
++indi-allsky-edge indi-allsky/longitude string 138.6007
++indi-allsky-edge indi-allsky/elevation string 50
++indi-allsky-edge indi-allsky/web_user string admin
++indi-allsky-edge indi-allsky/web_pass password testpassword123
++indi-allsky-edge indi-allsky/web_pass_confirm password testpassword123
+ EOF
+ 
+ apt-get update
+@@ -48,6 +54,17 @@ if [ ${#DEB_FILES[@]} -eq 0 ]; then
+ fi
+ 
+ apt-get install -y "${DEB_FILES[@]}"
++PKG_NAME=""
++for deb in "${DEB_FILES[@]}"; do
++    cand=$(dpkg-deb -f "$deb" Package 2>/dev/null || true)
++    case "$cand" in
++        indi-allsky*)
++            PKG_NAME="$cand"
++            break
++            ;;
++    esac
++done
++PKG_NAME="${PKG_NAME:-indi-allsky}"
+ 
+ echo "============================================================"
+ echo "=== 2. Testing Bundled Virtualenv & Extensions ==="
+@@ -204,13 +221,13 @@ echo "Non-interactive package reinstall/upgrade passed without prompts!"
+ echo "============================================================"
+ echo "=== 7. Testing Debconf Reconfiguration ==="
+ echo "============================================================"
+-dpkg-reconfigure -f noninteractive indi-allsky
++dpkg-reconfigure -f noninteractive "$PKG_NAME"
+ echo "Debconf reconfiguration passed!"
+ 
+ echo "============================================================"
+ echo "=== 8. Testing Package Purge ==="
+ echo "============================================================"
+-apt-get purge -y indi-allsky
++apt-get purge -y "$PKG_NAME"
+ test ! -d /var/lib/indi-allsky
+ test ! -d /etc/indi-allsky
+ echo "Package purge verified successfully!"

@@ -94,68 +94,11 @@ def sync_back_rerere(workspace_dir: Path, rr_cache_target: Path) -> None:
         print(f"Captured {count} new resolution(s) in {rr_cache_target}.")
 
 
-def transform_package_metadata(workspace_dir: Path, package_name: str) -> None:
-    """Transform debian packaging metadata from indi-allsky to indi-allsky-edge."""
-    control_path = workspace_dir / "debian" / "control"
-    if not control_path.exists():
-        print("Warning: debian/control not found, skipping package transform.")
-        return
-
-    content = control_path.read_text(encoding="utf-8")
-    if f"Package: {package_name}" not in content:
-        print(f"Transforming package identity to '{package_name}'...")
-        replacement = (
-            f"Package: {package_name}\n"
-            f"Provides: indi-allsky (= ${{binary:Version}})\n"
-            f"Conflicts: indi-allsky\n"
-            f"Replaces: indi-allsky"
-        )
-        content = re.sub(r"^Package:\s+indi-allsky$", replacement, content, flags=re.MULTILINE)
-        control_path.write_text(content, encoding="utf-8")
-
-    # Stamp changelog version
-    changelog_path = workspace_dir / "debian" / "changelog"
-    timestamp = datetime.now().strftime("%Y%m%d.%H%M")
-    base_version = "2026.09.01"
-
-    bump_script = workspace_dir / "misc" / "bump_version.py"
-    if bump_script.exists():
-        try:
-            res = run_command([sys.executable, str(bump_script), "--show"], cwd=workspace_dir, check=False)
-            if res.returncode == 0 and res.stdout.strip():
-                base_version = res.stdout.strip().split()[-1]
-        except Exception:
-            pass
-
-    edge_version = f"{base_version}~edge.{timestamp}"
-    rfc_date = datetime.now().strftime("%a, %d %b %Y %H:%M:%S +0000")
-
-    changelog_entry = (
-        f"{package_name} ({edge_version}) edge; urgency=medium\n\n"
-        f"  * Automated edge distribution build from PR manifest.\n\n"
-        f" -- indi-allsky-edge CI <ci@indi-allsky-edge.internal>  {rfc_date}\n\n"
-    )
-
-    if changelog_path.exists():
-        old_changelog = changelog_path.read_text(encoding="utf-8")
-        changelog_path.write_text(changelog_entry + old_changelog, encoding="utf-8")
-    else:
-        changelog_path.write_text(changelog_entry, encoding="utf-8")
-
-    run_command(["git", "add", "debian/control", "debian/changelog"], cwd=workspace_dir)
-    run_command(
-        ["git", "commit", "-m", f"chore(packaging): configure {package_name} {edge_version} metadata"],
-        cwd=workspace_dir,
-    )
-    print(f"Package stamped as: {package_name} ({edge_version})")
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="indi-allsky-edge Rebuild Engine")
     parser.add_argument("--manifest", type=Path, default=Path("manifest.yaml"), help="Path to manifest.yaml")
     parser.add_argument("--workspace", type=Path, default=Path("workspace"), help="Workspace directory for git build")
     parser.add_argument("--target-branch", type=str, default="edge", help="Target branch name")
-    parser.add_argument("--no-transform", action="store_true", help="Skip debian packaging metadata transformation")
     parser.add_argument("--push", action="store_true", help="Push target branch to origin")
     args = parser.parse_args()
 
@@ -271,11 +214,7 @@ def main() -> int:
             print(f"Warning: Failed to apply glue patch: {patch_file}. Skipping.")
             excluded.append(f"Patch {patch_file.name} (Apply failed)")
 
-    # 4. Transform Package Metadata
-    if not args.no_transform:
-        transform_package_metadata(workspace, package_name)
-
-    # 5. Capture new rerere resolutions
+    # 4. Capture new rerere resolutions
     sync_back_rerere(workspace, rr_cache_dir)
 
     print("\n==================================================================")
