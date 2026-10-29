@@ -1,8 +1,39 @@
 diff --git a/.github/workflows/package-deb.yml b/.github/workflows/package-deb.yml
-index 89711ab..6e63850 100644
+index 89711ab..f55a238 100644
 --- a/.github/workflows/package-deb.yml
 +++ b/.github/workflows/package-deb.yml
-@@ -101,8 +101,8 @@ jobs:
+@@ -2,11 +2,10 @@ name: Build & Package Debian Release (.deb)
+ 
+ on:
+   push:
++    branches:
++      - edge
+     tags:
+       - 'indi_v*'
+-  schedule:
+-    # Nightly build every night at 02:00 UTC
+-    - cron: '0 2 * * *'
+   workflow_dispatch:
+     inputs:
+       indi_core_tag:
+@@ -41,13 +40,13 @@ jobs:
+             echo "should_build=true" >> $GITHUB_OUTPUT
+           else
+             LATEST_COMMIT=$(git rev-parse HEAD)
+-            NIGHTLY_COMMIT=$(git rev-list -n 1 nightly 2>/dev/null || echo "none")
++            NIGHTLY_COMMIT=$(git rev-list -n 1 edge 2>/dev/null || echo "none")
+             
+             if [ "$NIGHTLY_COMMIT" == "none" ]; then
+-              echo "No nightly tag found, building."
++              echo "No edge tag found, building."
+               echo "should_build=true" >> $GITHUB_OUTPUT
+             elif [ "$LATEST_COMMIT" == "$NIGHTLY_COMMIT" ]; then
+-              echo "No new commits since last nightly build. Skipping."
++              echo "No new commits since last edge build. Skipping."
+               echo "should_build=false" >> $GITHUB_OUTPUT
+             else
+               echo "New commits found, building."
+@@ -101,8 +100,8 @@ jobs:
              # Nightly / Dev Build -> Nightly
              DATE_STAMP=$(date +'%Y%m%d.%H%M')
              BASE_VER=$(python3 misc/bump_version.py --show | awk '{print $NF}')
@@ -13,7 +44,7 @@ index 89711ab..6e63850 100644
              IS_RELEASE="false"
            fi
  
-@@ -126,6 +126,12 @@ jobs:
+@@ -126,6 +125,12 @@ jobs:
        - name: Generate Release Notes Summary & Git Changelog
          run: |
            {
@@ -26,7 +57,16 @@ index 89711ab..6e63850 100644
              echo "### Bundled INDI & Driver Versions"
              echo "* **INDI Core / Server**: \`${{ env.INDI_CORE_TAG }}\`"
              echo "* **INDI 3rd-Party Drivers**: \`${{ env.INDI_3RDPARTY_TAG }}\` (ZWO ASI, QHY, Player One, ToupTek, SVBONY, Starlight Xpress, etc.)"
-@@ -417,18 +423,18 @@ jobs:
+@@ -391,7 +396,7 @@ jobs:
+     name: Publish Releases
+     needs: [check-changes, build-deb]
+     runs-on: ubuntu-latest
+-    if: startsWith(github.ref, 'refs/tags/indi_v') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
++    if: always() && needs.build-deb.result == 'success'
+     steps:
+       - name: Checkout Code
+         uses: actions/checkout@v7
+@@ -417,18 +422,18 @@ jobs:
          env:
            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
          run: |
@@ -52,6 +92,15 @@ index 89711ab..6e63850 100644
              --prerelease \
              --target "${{ github.sha }}" \
              $NOTES_FLAG
+@@ -437,7 +442,7 @@ jobs:
+     name: Build & Deploy APT Repo (Cloudflare R2)
+     needs: [check-changes, build-deb, publish]
+     runs-on: ubuntu-latest
+-    if: startsWith(github.ref, 'refs/tags/indi_v') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
++    if: false  # APT repository deployment disabled for indi-allsky-edge
+     permissions:
+       contents: write
+     steps:
 diff --git a/debian/control b/debian/control
 index fa1c99d..3c946a4 100644
 --- a/debian/control
