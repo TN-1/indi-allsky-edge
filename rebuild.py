@@ -155,7 +155,8 @@ def write_composition_manifest(
             "|:---|",
         ])
         for ex in excluded_items:
-            lines.append(f"| {ex.replace('|', '\\|')} |")
+            clean_ex = ex.replace("|", "\\|")
+            lines.append(f"| {clean_ex} |")
 
     manifest_md = workspace_dir / "EDGE_COMPOSITION.md"
     manifest_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
