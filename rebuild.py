@@ -94,6 +94,74 @@ def sync_back_rerere(workspace_dir: Path, rr_cache_target: Path) -> None:
         print(f"Captured {count} new resolution(s) in {rr_cache_target}.")
 
 
+def write_composition_manifest(
+    workspace_dir: Path,
+    upstream_repo: str,
+    upstream_branch: str,
+    upstream_sha: str,
+    upstream_msg: str,
+    upstream_date: str,
+    integrated_prs: list[dict],
+    integrated_branches: list[dict],
+    applied_patches: list[dict],
+    excluded_items: list[str],
+) -> Path:
+    """Generate structured markdown manifest recording exact base commit and integrated items."""
+    lines = [
+        "## `indi-allsky-edge` Build Composition\n",
+        "This release is an automated bleeding edge distribution aggregating pending pull requests on top of the official upstream repository. It is mainly for testing purposes, and previewing upcoming features. Please do not report issues with this build on aaronwmorris/indi-allsky.\n",
+        "### Base Upstream Reference",
+        f"* **Repository**: [{upstream_repo}](https://github.com/{upstream_repo})",
+        f"* **Branch**: `{upstream_branch}`",
+        f"* **Base Commit**: [`{upstream_sha[:8]}`](https://github.com/{upstream_repo}/commit/{upstream_sha}) – *\"{upstream_msg}\"* ({upstream_date})\n",
+        f"### Integrated Pull Requests ({len(integrated_prs)})\n",
+        "| PR | Title | Author | Status |",
+        "|:---|:---|:---|:---|",
+    ]
+
+    for pr in integrated_prs:
+        pr_id = pr["id"]
+        pr_title = pr["title"].replace("|", "\\|")
+        author = pr.get("author", "Unknown")
+        author_link = f"[@{author}](https://github.com/{author})" if author != "Unknown" else "Unknown"
+        pr_link = f"[#{pr_id}](https://github.com/{upstream_repo}/pull/{pr_id})"
+        lines.append(f"| {pr_link} | {pr_title} | {author_link} | {pr['status']} |")
+
+    if integrated_branches:
+        lines.extend([
+            f"\n### Integrated External Branches ({len(integrated_branches)})\n",
+            "| Branch | Repository | Description | Status |",
+            "|:---|:---|:---|:---|",
+        ])
+        for b in integrated_branches:
+            b_name = b["branch"]
+            b_repo = b["repo"]
+            b_title = b["title"].replace("|", "\\|")
+            lines.append(f"| `{b_name}` | [{b_repo}]({b_repo}) | {b_title} | {b['status']} |")
+
+    if applied_patches:
+        lines.extend([
+            f"\n### Applied Reconciliation Glue Patches ({len(applied_patches)})\n",
+            "| Patch | Description |",
+            "|:---|:---|",
+        ])
+        for p in applied_patches:
+            lines.append(f"| `{p['file']}` | {p['desc']} |")
+
+    if excluded_items:
+        lines.extend([
+            f"\n### Excluded Items ({len(excluded_items)})\n",
+            "| Item |",
+            "|:---|",
+        ])
+        for ex in excluded_items:
+            lines.append(f"| {ex.replace('|', '\\|')} |")
+
+    manifest_md = workspace_dir / "EDGE_COMPOSITION.md"
+    manifest_md.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return manifest_md
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="indi-allsky-edge Rebuild Engine")
     parser.add_argument("--manifest", type=Path, default=Path("manifest.yaml"), help="Path to manifest.yaml")
@@ -123,8 +191,15 @@ def main() -> int:
     print(f"Resetting '{args.target_branch}' to upstream/{default_branch}...")
     run_command(["git", "checkout", "-B", args.target_branch, f"upstream/{default_branch}"], cwd=workspace)
 
+    upstream_sha = run_command(["git", "rev-parse", f"upstream/{default_branch}"], cwd=workspace).stdout.strip()
+    upstream_msg = run_command(["git", "log", "-1", "--format=%s", upstream_sha], cwd=workspace).stdout.strip()
+    upstream_date = run_command(["git", "log", "-1", "--format=%cd", "--date=short", upstream_sha], cwd=workspace).stdout.strip()
+
     integrated: list[str] = []
     excluded: list[str] = []
+    integrated_prs: list[dict] = []
+    integrated_branches: list[dict] = []
+    applied_patches: list[dict] = []
 
     # 1. Integrate Upstream Pull Requests
     pull_requests = manifest.get("pull_requests", [])
@@ -152,6 +227,7 @@ def main() -> int:
         if check_merged.returncode == 0:
             print(f"PR #{pr_id} is already merged in upstream history. Skipping.")
             integrated.append(f"PR #{pr_id} (Already upstream)")
+            integrated_prs.append({"id": pr_id, "title": title, "author": pr.get("author", "Unknown"), "status": "Already upstream"})
             continue
 
         # Attempt merge
@@ -161,6 +237,7 @@ def main() -> int:
         if merge_res.returncode == 0:
             print(f"Successfully integrated PR #{pr_id}.")
             integrated.append(f"PR #{pr_id}: {title}")
+            integrated_prs.append({"id": pr_id, "title": title, "author": pr.get("author", "Unknown"), "status": "Clean merge"})
         else:
             print(f"Merge conflict encountered in PR #{pr_id}.")
             status_res = run_command(["git", "status", "--porcelain"], cwd=workspace, check=False)
@@ -170,6 +247,7 @@ def main() -> int:
                 print("All conflicts resolved automatically via git rerere. Committing merge...")
                 run_command(["git", "commit", "--no-edit"], cwd=workspace)
                 integrated.append(f"PR #{pr_id} (Resolved via rerere)")
+                integrated_prs.append({"id": pr_id, "title": title, "author": pr.get("author", "Unknown"), "status": "Resolved via rerere"})
             else:
                 run_command(["git", "merge", "--abort"], cwd=workspace, check=False)
                 print(f"Graceful Exclusion: Skipping PR #{pr_id} to maintain build continuity.")
@@ -195,6 +273,7 @@ def main() -> int:
         if merge_res.returncode == 0:
             print(f"Successfully integrated external branch '{branch_name}'.")
             integrated.append(f"External {branch_name}: {title}")
+            integrated_branches.append({"branch": branch_name, "repo": repo_url, "title": title, "status": "Clean merge"})
         else:
             run_command(["git", "merge", "--abort"], cwd=workspace, check=False)
             print(f"Graceful Exclusion: Skipping external branch '{branch_name}'.")
@@ -210,11 +289,32 @@ def main() -> int:
         if apply_res.returncode == 0:
             run_command(["git", "commit", "-am", f"chore(reconciliation): {desc}"], cwd=workspace)
             integrated.append(f"Patch: {desc}")
+            applied_patches.append({"file": patch_info["file"], "desc": desc})
         else:
             print(f"Warning: Failed to apply glue patch: {patch_file}. Skipping.")
             excluded.append(f"Patch {patch_file.name} (Apply failed)")
 
-    # 4. Capture new rerere resolutions
+    # 4. Generate Build Composition Manifest
+    print("\n--> Generating EDGE_COMPOSITION.md manifest...")
+    write_composition_manifest(
+        workspace,
+        upstream_repo,
+        default_branch,
+        upstream_sha,
+        upstream_msg,
+        upstream_date,
+        integrated_prs,
+        integrated_branches,
+        applied_patches,
+        excluded,
+    )
+    run_command(["git", "add", "EDGE_COMPOSITION.md"], cwd=workspace)
+    run_command(
+        ["git", "commit", "-m", "chore(metadata): record edge build composition manifest"],
+        cwd=workspace,
+    )
+
+    # 5. Capture new rerere resolutions
     sync_back_rerere(workspace, rr_cache_dir)
 
     print("\n==================================================================")

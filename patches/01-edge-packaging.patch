@@ -1,5 +1,5 @@
 diff --git a/.github/workflows/package-deb.yml b/.github/workflows/package-deb.yml
-index 50a777b0..ca95e4ce 100644
+index 89711ab..6e63850 100644
 --- a/.github/workflows/package-deb.yml
 +++ b/.github/workflows/package-deb.yml
 @@ -101,8 +101,8 @@ jobs:
@@ -13,8 +13,47 @@ index 50a777b0..ca95e4ce 100644
              IS_RELEASE="false"
            fi
  
+@@ -126,6 +126,12 @@ jobs:
+       - name: Generate Release Notes Summary & Git Changelog
+         run: |
+           {
++            if [ -f "EDGE_COMPOSITION.md" ]; then
++              cat EDGE_COMPOSITION.md
++              echo ""
++              echo "---"
++              echo ""
++            fi
+             echo "### Bundled INDI & Driver Versions"
+             echo "* **INDI Core / Server**: \`${{ env.INDI_CORE_TAG }}\`"
+             echo "* **INDI 3rd-Party Drivers**: \`${{ env.INDI_3RDPARTY_TAG }}\` (ZWO ASI, QHY, Player One, ToupTek, SVBONY, Starlight Xpress, etc.)"
+@@ -417,18 +423,18 @@ jobs:
+         env:
+           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+         run: |
+-          echo "=== Resetting nightly pre-release ==="
+-          # Delete existing nightly release and its tag in 1 call to wipe old assets instantly
+-          gh release delete nightly -y --cleanup-tag 2>/dev/null || true
++          echo "=== Resetting edge pre-release ==="
++          # Delete existing edge release and its tag in 1 call to wipe old assets instantly
++          gh release delete edge -y --cleanup-tag 2>/dev/null || true
+ 
+-          # Create fresh nightly release with target commit SHA
+-          NOTES_FLAG="--notes 'Automated INDI Allsky Nightly Build'"
++          # Create fresh edge release with target commit SHA
++          NOTES_FLAG="--notes 'Automated INDI Allsky Bleeding Edge Build'"
+           if [ -f "downloaded-debs/release_notes.md" ]; then
+             NOTES_FLAG="--notes-file downloaded-debs/release_notes.md"
+           fi
+ 
+-          gh release create nightly downloaded-debs/*.deb \
+-            --title "Nightly Build" \
++          gh release create edge downloaded-debs/*.deb \
++            --title "Bleeding Edge Build" \
+             --prerelease \
+             --target "${{ github.sha }}" \
+             $NOTES_FLAG
 diff --git a/debian/control b/debian/control
-index fa1c99da..3c946a4b 100644
+index fa1c99d..3c946a4 100644
 --- a/debian/control
 +++ b/debian/control
 @@ -15,7 +15,7 @@ Build-Depends: debhelper-compat (= 13),
@@ -40,7 +79,7 @@ index fa1c99da..3c946a4b 100644
   indi-allsky is a complete solution for operating an allsky camera using the
   INDI library framework for camera control, keogram generation, startrail
 diff --git a/debian/rules b/debian/rules
-index 4a35ece5..c11538f8 100755
+index e165814..f8b26c6 100644
 --- a/debian/rules
 +++ b/debian/rules
 @@ -1,5 +1,19 @@
@@ -63,7 +102,7 @@ index 4a35ece5..c11538f8 100755
  %:
  	dh $@
  
-@@ -63,8 +77,12 @@ override_dh_installsystemd:
+@@ -62,8 +76,12 @@ override_dh_installsystemd:
  
  override_dh_fixperms:
  	dh_fixperms
@@ -78,7 +117,7 @@ index 4a35ece5..c11538f8 100755
 +	fi
  	dh_auto_clean
 diff --git a/debian/tests/qa_test.sh b/debian/tests/qa_test.sh
-index 7a1a6784..3e982b55 100755
+index 7a1a678..f3650a9 100644
 --- a/debian/tests/qa_test.sh
 +++ b/debian/tests/qa_test.sh
 @@ -11,6 +11,12 @@ indi-allsky indi-allsky/elevation string 50
@@ -108,7 +147,7 @@ index 7a1a6784..3e982b55 100755
 +            ;;
 +    esac
 +done
-+PKG_NAME="${PKG_NAME:-indi-allsky}"
++PKG_NAME="${PKG_NAME:-indi-allsky}" 
  
  echo "============================================================"
  echo "=== 2. Testing Bundled Virtualenv & Extensions ==="
