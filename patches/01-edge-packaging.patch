@@ -1,5 +1,5 @@
 diff --git a/.github/workflows/package-deb.yml b/.github/workflows/package-deb.yml
-index 89711ab..f55a238 100644
+index 89711ab..79d5b27 100644
 --- a/.github/workflows/package-deb.yml
 +++ b/.github/workflows/package-deb.yml
 @@ -2,11 +2,10 @@ name: Build & Package Debian Release (.deb)
@@ -16,19 +16,28 @@ index 89711ab..f55a238 100644
    workflow_dispatch:
      inputs:
        indi_core_tag:
-@@ -41,13 +40,13 @@ jobs:
+@@ -36,18 +35,18 @@ jobs:
+       - name: Check for changes since last nightly
+         id: check
+         run: |
+-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+-            echo "Tag pushed, forcing build."
++          if [ "${{ github.event_name }}" == "push" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
++            echo "Push, workflow_dispatch, or tag event, forcing build."
              echo "should_build=true" >> $GITHUB_OUTPUT
            else
              LATEST_COMMIT=$(git rev-parse HEAD)
 -            NIGHTLY_COMMIT=$(git rev-list -n 1 nightly 2>/dev/null || echo "none")
-+            NIGHTLY_COMMIT=$(git rev-list -n 1 edge 2>/dev/null || echo "none")
++            EDGE_COMMIT=$(git rev-list -n 1 refs/tags/edge 2>/dev/null || echo "none")
              
-             if [ "$NIGHTLY_COMMIT" == "none" ]; then
+-            if [ "$NIGHTLY_COMMIT" == "none" ]; then
 -              echo "No nightly tag found, building."
++            if [ "$EDGE_COMMIT" == "none" ]; then
 +              echo "No edge tag found, building."
                echo "should_build=true" >> $GITHUB_OUTPUT
-             elif [ "$LATEST_COMMIT" == "$NIGHTLY_COMMIT" ]; then
+-            elif [ "$LATEST_COMMIT" == "$NIGHTLY_COMMIT" ]; then
 -              echo "No new commits since last nightly build. Skipping."
++            elif [ "$LATEST_COMMIT" == "$EDGE_COMMIT" ]; then
 +              echo "No new commits since last edge build. Skipping."
                echo "should_build=false" >> $GITHUB_OUTPUT
              else
