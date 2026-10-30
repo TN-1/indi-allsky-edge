@@ -27,6 +27,10 @@ pull_requests:
     title: "fix: ensure form choice options are tuples for WTForms 3.2+ compatibility"
     author: "TN-1"
 
+  - id: 3329
+    title: "fix: ensure float field formatting and validation support WTForms 3.3+ NumberInput"
+    author: "TN-1"
+
   - id: 3321
     title: "fix(sensors): handle TSL2561 and TSL2591 out-of-range readings"
     author: "TN-1"
