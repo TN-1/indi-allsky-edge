@@ -15,7 +15,7 @@ Build-Depends: debhelper-compat (= 13),
 Standards-Version: 4.6.2
 Homepage: https://github.com/aaronwmorris/indi-allsky
 
-Package: indi-allsky
+Package: indi-allsky-edge
 Architecture: any
 Depends: ${misc:Depends},
  python3 (>= 3.9),
@@ -52,9 +52,10 @@ Suggests: mosquitto,
  gpsd,
  udiskie,
  gsc
+Conflicts: indi-allsky
 Breaks: indi-allsky-web (<< ${binary:Version})
-Replaces: indi-allsky-web (<< ${binary:Version})
-Provides: indi-allsky-web (= ${binary:Version})
+Replaces: indi-allsky, indi-allsky-web (<< ${binary:Version})
+Provides: indi-allsky (= ${binary:Version}), indi-allsky-web (= ${binary:Version})
 Description: Allsky camera software using INDI framework and Flask web UI
  indi-allsky is a complete solution for operating an allsky camera using the
  INDI library framework for camera control, keogram generation, startrail

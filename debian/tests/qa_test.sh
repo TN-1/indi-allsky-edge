@@ -11,6 +11,12 @@ indi-allsky indi-allsky/elevation string 50
 indi-allsky indi-allsky/web_user string admin
 indi-allsky indi-allsky/web_pass password testpassword123
 indi-allsky indi-allsky/web_pass_confirm password testpassword123
+indi-allsky-edge indi-allsky/latitude string -34.9285
+indi-allsky-edge indi-allsky/longitude string 138.6007
+indi-allsky-edge indi-allsky/elevation string 50
+indi-allsky-edge indi-allsky/web_user string admin
+indi-allsky-edge indi-allsky/web_pass password testpassword123
+indi-allsky-edge indi-allsky/web_pass_confirm password testpassword123
 EOF
 
 apt-get update
@@ -48,6 +54,17 @@ if [ ${#DEB_FILES[@]} -eq 0 ]; then
 fi
 
 apt-get install -y "${DEB_FILES[@]}"
+PKG_NAME=""
+for deb in "${DEB_FILES[@]}"; do
+    cand=$(dpkg-deb -f "$deb" Package 2>/dev/null || true)
+    case "$cand" in
+        indi-allsky*)
+            PKG_NAME="$cand"
+            break
+            ;;
+    esac
+done
+PKG_NAME="${PKG_NAME:-indi-allsky}" 
 
 echo "============================================================"
 echo "=== 2. Testing Bundled Virtualenv & Extensions ==="
@@ -204,13 +221,13 @@ echo "Non-interactive package reinstall/upgrade passed without prompts!"
 echo "============================================================"
 echo "=== 7. Testing Debconf Reconfiguration ==="
 echo "============================================================"
-dpkg-reconfigure -f noninteractive indi-allsky
+dpkg-reconfigure -f noninteractive "$PKG_NAME"
 echo "Debconf reconfiguration passed!"
 
 echo "============================================================"
 echo "=== 8. Testing Package Purge ==="
 echo "============================================================"
-apt-get purge -y indi-allsky
+apt-get purge -y "$PKG_NAME"
 test ! -d /var/lib/indi-allsky
 test ! -d /etc/indi-allsky
 echo "Package purge verified successfully!"

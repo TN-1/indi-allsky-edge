@@ -2,11 +2,10 @@ name: Build & Package Debian Release (.deb)
 
 on:
   push:
+    branches:
+      - edge
     tags:
       - 'indi_v*'
-  schedule:
-    # Nightly build every night at 02:00 UTC
-    - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       indi_core_tag:
@@ -36,18 +35,18 @@ jobs:
       - name: Check for changes since last nightly
         id: check
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "Tag pushed, forcing build."
+          if [ "${{ github.event_name }}" == "push" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "Push or manual event, forcing build."
             echo "should_build=true" >> $GITHUB_OUTPUT
           else
             LATEST_COMMIT=$(git rev-parse HEAD)
-            NIGHTLY_COMMIT=$(git rev-list -n 1 nightly 2>/dev/null || echo "none")
+            EDGE_COMMIT=$(git rev-list -n 1 refs/tags/edge 2>/dev/null || echo "none")
             
-            if [ "$NIGHTLY_COMMIT" == "none" ]; then
-              echo "No nightly tag found, building."
+            if [ "$EDGE_COMMIT" == "none" ]; then
+              echo "No edge tag found, building."
               echo "should_build=true" >> $GITHUB_OUTPUT
-            elif [ "$LATEST_COMMIT" == "$NIGHTLY_COMMIT" ]; then
-              echo "No new commits since last nightly build. Skipping."
+            elif [ "$LATEST_COMMIT" == "$EDGE_COMMIT" ]; then
+              echo "No new commits since last edge build. Skipping."
               echo "should_build=false" >> $GITHUB_OUTPUT
             else
               echo "New commits found, building."
@@ -101,8 +100,8 @@ jobs:
             # Nightly / Dev Build -> Nightly
             DATE_STAMP=$(date +'%Y%m%d.%H%M')
             BASE_VER=$(python3 misc/bump_version.py --show | awk '{print $NF}')
-            VERSION="${BASE_VER}~nightly.${DATE_STAMP}"
-            SUITE="nightly"
+            VERSION="${BASE_VER}~edge.${DATE_STAMP}"
+            SUITE="edge"
             IS_RELEASE="false"
           fi
 
@@ -126,6 +125,12 @@ jobs:
       - name: Generate Release Notes Summary & Git Changelog
         run: |
           {
+            if [ -f "EDGE_COMPOSITION.md" ]; then
+              cat EDGE_COMPOSITION.md
+              echo ""
+              echo "---"
+              echo ""
+            fi
             echo "### Bundled INDI & Driver Versions"
             echo "* **INDI Core / Server**: \`${{ env.INDI_CORE_TAG }}\`"
             echo "* **INDI 3rd-Party Drivers**: \`${{ env.INDI_3RDPARTY_TAG }}\` (ZWO ASI, QHY, Player One, ToupTek, SVBONY, Starlight Xpress, etc.)"
@@ -391,7 +396,9 @@ jobs:
     name: Publish Releases
     needs: [check-changes, build-deb]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/indi_v') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: always() && needs.build-deb.result == 'success'
+    permissions:
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
@@ -412,23 +419,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prune Stale Nightly Assets & Publish Release
-        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/v') && !startsWith(github.ref, 'refs/tags/indi_v'))
+      - name: Prune Stale Edge Assets & Publish Release
+        if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.EDGE_PAT || secrets.GITHUB_TOKEN }}
         run: |
-          echo "=== Resetting nightly pre-release ==="
-          # Delete existing nightly release and its tag in 1 call to wipe old assets instantly
-          gh release delete nightly -y --cleanup-tag 2>/dev/null || true
+          echo "=== Resetting edge pre-release ==="
+          # Delete existing edge release and its tag in 1 call to wipe old assets instantly
+          gh release delete edge -y --cleanup-tag 2>/dev/null || true
 
-          # Create fresh nightly release with target commit SHA
-          NOTES_FLAG="--notes 'Automated INDI Allsky Nightly Build'"
+          # Create fresh edge release with target commit SHA
+          NOTES_FLAG="--notes 'Automated INDI Allsky Bleeding Edge Build'"
           if [ -f "downloaded-debs/release_notes.md" ]; then
             NOTES_FLAG="--notes-file downloaded-debs/release_notes.md"
           fi
 
-          gh release create nightly downloaded-debs/*.deb \
-            --title "Nightly Build" \
+          gh release create edge downloaded-debs/*.deb \
+            --title "Bleeding Edge Build" \
             --prerelease \
             --target "${{ github.sha }}" \
             $NOTES_FLAG
@@ -437,7 +444,7 @@ jobs:
     name: Build & Deploy APT Repo (Cloudflare R2)
     needs: [check-changes, build-deb, publish]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/indi_v') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: false  # APT repository deployment disabled for indi-allsky-edge
     permissions:
       contents: write
     steps:
