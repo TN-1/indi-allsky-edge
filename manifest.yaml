@@ -114,6 +114,10 @@ pull_requests:
     author: "TN-1"
 
   # --- Dependency Updates ---
+  - id: 3337
+    title: "refactor(requirements): modernize dependency manifests and isolate legacy targets"
+    author: "TN-1"
+
   - id: 3332
     title: "Bump the npm-dependencies group with 2 updates"
     author: "dependabot[bot]"

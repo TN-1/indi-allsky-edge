@@ -242,7 +242,17 @@ def main() -> int:
         else:
             print(f"Merge conflict encountered in PR #{pr_id}.")
             status_res = run_command(["git", "status", "--porcelain"], cwd=workspace, check=False)
-            unmerged = [line for line in status_res.stdout.splitlines() if line.startswith("UU") or line.startswith("AA")]
+            lines = status_res.stdout.splitlines()
+            for line in lines:
+                if line.startswith("UD "):
+                    deleted_file = line[3:].strip()
+                    run_command(["git", "rm", deleted_file], cwd=workspace, check=False)
+
+            status_res = run_command(["git", "status", "--porcelain"], cwd=workspace, check=False)
+            unmerged = [
+                line for line in status_res.stdout.splitlines()
+                if line[:2] in {"UU", "AA", "DD", "AU", "UD", "UA", "DU"}
+            ]
 
             if not unmerged:
                 print("All conflicts resolved automatically via git rerere. Committing merge...")
