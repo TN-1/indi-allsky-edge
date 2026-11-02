@@ -118,10 +118,6 @@ pull_requests:
     title: "Bump the npm-dependencies group with 2 updates"
     author: "dependabot[bot]"
 
-  - id: 3333
-    title: "Bump the python-dependencies group in /requirements with 36 updates"
-    author: "dependabot[bot]"
-
   # --- Large Subsystem Enhancements (Reconciled on Edge) ---
   - id: 3265
     title: "Support sensor devices A-Z with a progressive Add sensor UI"
