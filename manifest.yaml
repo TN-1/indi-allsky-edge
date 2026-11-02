@@ -22,15 +22,7 @@ package:
 # Pull Requests (Integrated in sequential order)
 # ------------------------------------------------------------------------------
 pull_requests:
-  # --- Core Stability, Security, and WTForms Compatibility ---
-  - id: 3322
-    title: "fix: ensure form choice options are tuples for WTForms 3.2+ compatibility"
-    author: "TN-1"
-
-  - id: 3329
-    title: "fix: ensure float field formatting and validation support WTForms 3.3+ NumberInput"
-    author: "TN-1"
-
+  # --- Core Stability & Security ---
   - id: 3321
     title: "fix(sensors): handle TSL2561 and TSL2591 out-of-range readings"
     author: "TN-1"
@@ -42,14 +34,6 @@ pull_requests:
   - id: 3316
     title: "fix: respect configured image file type in allsky-map ping"
     author: "TN-1"
-
-  - id: 3315
-    title: "Fix Support Info generation failing when configuration contains Unicode characters"
-    author: "nicoloserafino"
-
-  - id: 3309
-    title: "Fix: Local camera freshness after DST changes"
-    author: "321MathiasS123"
 
   - id: 3305
     title: "Fix: Logging in darks.py"
@@ -128,6 +112,15 @@ pull_requests:
   - id: 3049
     title: "Feature: Adds script to generate screenshots"
     author: "TN-1"
+
+  # --- Dependency Updates ---
+  - id: 3332
+    title: "Bump the npm-dependencies group with 2 updates"
+    author: "dependabot[bot]"
+
+  - id: 3333
+    title: "Bump the python-dependencies group in /requirements with 36 updates"
+    author: "dependabot[bot]"
 
   # --- Large Subsystem Enhancements (Reconciled on Edge) ---
   - id: 3265
