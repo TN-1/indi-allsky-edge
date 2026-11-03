@@ -1,0 +1,666 @@
+#!/bin/bash
+###############################################################################
+# indi-allsky-ctl: Command-line control & maintenance utility for indi-allsky
+###############################################################################
+set -e
+
+# Resolve APP_DIR dynamically (supports installed package and git source tree)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$SCRIPT_DIR" = "/usr/bin" ] || [ "$SCRIPT_DIR" = "/usr/local/bin" ]; then
+    APP_DIR="/usr/share/indi-allsky"
+elif [ -d "${SCRIPT_DIR}/../indi_allsky" ]; then
+    APP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+elif [ -d "/usr/share/indi-allsky" ]; then
+    APP_DIR="/usr/share/indi-allsky"
+else
+    APP_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+fi
+
+if [ -x "/var/lib/indi-allsky/venv/bin/python3" ]; then
+    PYTHON_BIN="/var/lib/indi-allsky/venv/bin/python3"
+elif [ -x "${APP_DIR}/virtualenv/indi-allsky/bin/python3" ]; then
+    PYTHON_BIN="${APP_DIR}/virtualenv/indi-allsky/bin/python3"
+elif [ -x "${APP_DIR}/.venv/bin/python3" ]; then
+    PYTHON_BIN="${APP_DIR}/.venv/bin/python3"
+else
+    PYTHON_BIN="python3"
+fi
+export PYTHONPATH="${APP_DIR}:${PYTHONPATH:-}"
+
+show_help() {
+    cat <<EOF
+INDI Allsky Command-Line Control & Maintenance Utility
+
+Usage:
+  indi-allsky-ctl <command> [options/arguments...]
+
+User & Authentication Management:
+  passwd / reset-pass      Reset or change password for a web user
+  user-add                 Create a new web user account
+  user-list                List all configured web users
+  user-del                 Delete a web user account
+
+Database & Storage:
+  backup-db                Create an immediate database backup
+  fix-perms                Restore standard ownership & permissions (as in setup.sh)
+  expire-images            Run image retention expiration and storage purge
+  rebuild-thumbnails       Regenerate missing image thumbnails
+  convert-db               Convert database between SQLite and MySQL
+  validate-db              Audit database schema and repair broken records
+  flush-images             Purge historical images/videos for a camera from DB
+  flush-16min-images       Purge images taken within last 16 minutes from DB
+  merge-cameras            Migrate records and images from one camera ID to another
+  optimize-mysql           Optimize MySQL / MariaDB database tables
+  darks / capture-darks    Capture and generate master dark frames (sigmaclip, average)
+  flush-darks              Delete all master dark frames from storage and database
+  import-darks             Interactively import dark frames and bad pixel maps
+  config                   Manage camera configuration (bootstrap, dump, edit, load)
+  reset-config             Reset camera configuration to default values
+  dump-config              Export active camera configuration to JSON
+  retry-uploads            Manually sync / retry pending uploads (images/videos/API)
+  notify                   Inject an alert notification into the database
+
+Hardware & Diagnostics:
+  test-camera              Run diagnostic camera capture test
+  list-cameras             List detected INDI cameras
+  camera-info              Display detailed sensor and capability info for cameras
+  camera-props             List all INDI driver properties exposed by camera
+  test-linearity           Perform camera sensor exposure linearity test
+  test-sensors             Probe and read connected hardware sensors
+  test-devices             Test fans, dew heaters, and GPIO output devices
+  test-upload              Test file transfer protocols (SFTP/FTP/S3/Sync API)
+  test-adsb                Test ADS-B aircraft tracking receiver connection
+  test-oci                 Validate Oracle Cloud Infrastructure (OCI) credentials
+  test-websocket           Test WebSocket real-time events and send control commands
+<<<<<<<
+  mcp [action]             Control MCP server daemon (enable|disable|start|stop|restart|status|logs|run)
+=======
+  profile / system-profile Display detected hardware tier and auto-tuned settings
+>>>>>>>
+  support-info             Generate diagnostic report bundle for troubleshooting
+
+Peripheral Configuration & Integrations:
+  disable-leds             Disable Raspberry Pi onboard LEDs (Pi 3, 4, 5)
+  setup-mqtt               Install and configure Mosquitto MQTT broker
+  ha-discovery             Send Home Assistant MQTT auto-discovery configurations
+  setup-gps                Configure GPS / GPSD service
+  setup-hotspot            Configure WiFi hotspot failover
+  setup-rtc                Configure I2C hardware Real-Time Clock
+  setup-usb-mount          Configure automatic USB flash drive automount
+
+Security & TLS Certificates:
+  ssl-ca-export            Export or display the local mkcert Root CA certificate
+  ssl-renew                Check and renew TLS leaf certificate (optional: --force)
+
+Package & Driver Management:
+  hold-indi                Pin installed INDI packages so 'apt upgrade' won't touch them
+  unhold-indi              Unpin INDI packages to allow upgrades with 'apt upgrade'
+  protect-source-indi      Register source-built INDI with APT (prevents repo overwrites)
+  status-indi-hold         Show current APT hold status for INDI packages
+
+Service Control:
+  status                   Show status of indi-allsky and gunicorn services
+  restart                  Restart indi-allsky and gunicorn services
+  logs                     Follow recent logs from systemd journal
+
+EOF
+}
+
+fix_permissions() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "Error: fix-perms requires root privileges. Please run with sudo:"
+        echo "  sudo indi-allsky-ctl fix-perms"
+        exit 1
+    fi
+
+    ALLSKY_USER="indi-allsky"
+    ALLSKY_GROUP="indi-allsky"
+    WWW_GROUP="www-data"
+    ALLSKY_ETC="/etc/indi-allsky"
+    DB_FOLDER="/var/lib/indi-allsky"
+    DB_FILE="${DB_FOLDER}/indi-allsky.sqlite"
+    VARLIB_FOLDER="/var/lib/indi-allsky"
+    LOG_FOLDER="/var/log/indi-allsky"
+    HTDOCS_FOLDER="/var/www/html/allsky"
+
+    # Resolve IMAGE_FOLDER dynamically from SQLite database or flask.json if present
+    IMAGE_FOLDER="${HTDOCS_FOLDER}/images"
+    if [ -f "$DB_FILE" ] && command -v sqlite3 >/dev/null 2>&1; then
+        CFG_JSON=$(sqlite3 "$DB_FILE" "SELECT data FROM config ORDER BY id DESC LIMIT 1;" 2>/dev/null || true)
+        if [ -n "$CFG_JSON" ] && command -v jq >/dev/null 2>&1; then
+            DETECTED_IMG=$(echo "$CFG_JSON" | jq -r '.IMAGE_FOLDER // empty' 2>/dev/null || true)
+            [ -n "$DETECTED_IMG" ] && IMAGE_FOLDER="$DETECTED_IMG"
+        fi
+    fi
+    if [ -f "${ALLSKY_ETC}/flask.json" ] && command -v jq >/dev/null 2>&1; then
+        CFG_IMAGE_FOLDER=$(jq -r '.INDI_ALLSKY_IMAGE_FOLDER // .IMAGE_FOLDER // empty' "${ALLSKY_ETC}/flask.json" 2>/dev/null || true)
+        if [ -n "$CFG_IMAGE_FOLDER" ]; then
+            IMAGE_FOLDER="$CFG_IMAGE_FOLDER"
+        fi
+    fi
+
+    echo "indi-allsky: Setting up and repairing directory permissions..."
+
+    # 1. Log folder (/var/log/indi-allsky)
+    [ ! -d "$LOG_FOLDER" ] && mkdir -p "$LOG_FOLDER"
+    chmod 755 "$LOG_FOLDER"
+    chown -R "${ALLSKY_USER}:${ALLSKY_GROUP}" "$LOG_FOLDER" 2>/dev/null || true
+
+    # 2. Config folder (/etc/indi-allsky)
+    [ ! -d "$ALLSKY_ETC" ] && mkdir -p "$ALLSKY_ETC"
+    chmod 775 "$ALLSKY_ETC"
+    chown -R "${ALLSKY_USER}:${ALLSKY_GROUP}" "$ALLSKY_ETC" 2>/dev/null || true
+    if [ -f "${ALLSKY_ETC}/flask.json" ]; then
+        chown "${ALLSKY_USER}:${WWW_GROUP}" "${ALLSKY_ETC}/flask.json" 2>/dev/null || true
+        chmod 660 "${ALLSKY_ETC}/flask.json" 2>/dev/null || true
+    fi
+    if [ -f "${ALLSKY_ETC}/indi-allsky.env" ]; then
+        chmod 600 "${ALLSKY_ETC}/indi-allsky.env" 2>/dev/null || true
+    fi
+
+    # 3. Database folder (/var/lib/indi-allsky)
+    [ ! -d "$DB_FOLDER" ] && mkdir -p "$DB_FOLDER"
+    chmod 775 "$DB_FOLDER"
+    chown -R "${ALLSKY_USER}:${ALLSKY_GROUP}" "$DB_FOLDER" 2>/dev/null || true
+    [ ! -d "${DB_FOLDER}/backup" ] && mkdir -p "${DB_FOLDER}/backup"
+    chmod 775 "${DB_FOLDER}/backup"
+    chown "${ALLSKY_USER}:${ALLSKY_GROUP}" "${DB_FOLDER}/backup" 2>/dev/null || true
+    if [ -f "${DB_FILE}" ]; then
+        chmod 664 "${DB_FILE}"
+        chown "${ALLSKY_USER}:${ALLSKY_GROUP}" "${DB_FILE}" 2>/dev/null || true
+    fi
+
+    # 4. HTDOCS Web folder (/var/www/html/allsky)
+    if [ -d "$HTDOCS_FOLDER" ]; then
+        chmod 755 "$HTDOCS_FOLDER"
+        chown -R "${ALLSKY_USER}:${WWW_GROUP}" "$HTDOCS_FOLDER" 2>/dev/null || true
+        [ -d "$HTDOCS_FOLDER/js" ] && chmod 775 "$HTDOCS_FOLDER/js" 2>/dev/null || true
+    fi
+
+    # 5. Image storage folder (Recursive matching setup.sh)
+    [ ! -d "$IMAGE_FOLDER" ] && mkdir -p "$IMAGE_FOLDER"
+    if [ -d "$IMAGE_FOLDER" ]; then
+        chmod 775 "$IMAGE_FOLDER"
+        chown -R "${ALLSKY_USER}:${WWW_GROUP}" "$IMAGE_FOLDER" 2>/dev/null || true
+        [ ! -d "${IMAGE_FOLDER}/darks" ] && mkdir -p "${IMAGE_FOLDER}/darks"
+        [ ! -d "${IMAGE_FOLDER}/export" ] && mkdir -p "${IMAGE_FOLDER}/export"
+        chmod 775 "${IMAGE_FOLDER}/darks" "${IMAGE_FOLDER}/export" 2>/dev/null || true
+        chown "${ALLSKY_USER}:${WWW_GROUP}" "${IMAGE_FOLDER}/darks" "${IMAGE_FOLDER}/export" 2>/dev/null || true
+    fi
+
+    # 6. Varlib folder
+    if [ -d "$VARLIB_FOLDER" ]; then
+        chmod 775 "$VARLIB_FOLDER"
+        chown -R "${ALLSKY_USER}:${ALLSKY_GROUP}" "$VARLIB_FOLDER" 2>/dev/null || true
+        if [ -d "${VARLIB_FOLDER}/working/gunicorn" ]; then
+            chown -R "${ALLSKY_USER}:${WWW_GROUP}" "${VARLIB_FOLDER}/working/gunicorn" 2>/dev/null || true
+            chmod 775 "${VARLIB_FOLDER}/working/gunicorn" 2>/dev/null || true
+        fi
+    fi
+
+    echo "indi-allsky: Directory permissions and ownership successfully restored."
+}
+
+protect_source_indi() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "Error: protect-source-indi requires root privileges. Please run with sudo:"
+        echo "  sudo indi-allsky-ctl protect-source-indi"
+        exit 1
+    fi
+
+    echo "indi-allsky: Protecting local source-built INDI installation..."
+    
+    if ! command -v equivs-build >/dev/null 2>&1; then
+        echo "Installing 'equivs' package builder..."
+        apt-get update -qq && apt-get install -y equivs -qq
+    fi
+
+    TMP_DIR=$(mktemp -d)
+    cd "$TMP_DIR"
+
+    cat <<EOF > indi-local-source.control
+Section: misc
+Priority: optional
+Standards-Version: 3.9.2
+Package: indi-local-source
+Provides: libindi1, libindiclient1, libindidriver1, libindi-data, libindi-dev, indi-bin, indi-3rdparty
+Version: 99.0.0
+Architecture: all
+Maintainer: Local System Administrator <root@localhost>
+Description: Local source build of INDI Framework
+ Registers locally compiled INDI server and drivers in the dpkg database
+ so that APT dependencies are satisfied without overwriting source files.
+EOF
+
+    equivs-build indi-local-source.control >/dev/null
+    dpkg -i indi-local-source_99.0.0_all.deb
+
+    cd /
+    rm -rf "$TMP_DIR"
+
+    echo "indi-allsky: Local source INDI successfully registered with APT (dummy package version 99.0.0)."
+    echo "APT will now recognize your source build and will not overwrite it with repo packages."
+}
+
+hold_indi() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "Error: hold-indi requires root privileges. Please run with sudo:"
+        echo "  sudo indi-allsky-ctl hold-indi"
+        exit 1
+    fi
+
+    INDI_PKGS="indi-bin indi-3rdparty libindi1 libindiclient1 libindi-data libindi-dev indi-dbg"
+    INSTALLED_PKGS=""
+    for pkg in $INDI_PKGS; do
+        if dpkg -l "$pkg" 2>/dev/null | grep -q "^ii"; then
+            INSTALLED_PKGS="$INSTALLED_PKGS $pkg"
+        fi
+    done
+
+    if [ -z "$INSTALLED_PKGS" ]; then
+        echo "No standard INDI APT packages are currently installed."
+        echo "If you installed INDI from source, use: sudo indi-allsky-ctl protect-source-indi"
+        return 0
+    fi
+
+    echo "indi-allsky: Pinning (holding) INDI packages from automatic upgrades:"
+    apt-mark hold $INSTALLED_PKGS
+    echo "INDI packages are now pinned. System 'apt upgrade' will not modify them."
+}
+
+unhold_indi() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "Error: unhold-indi requires root privileges. Please run with sudo:"
+        echo "  sudo indi-allsky-ctl unhold-indi"
+        exit 1
+    fi
+
+    INDI_PKGS="indi-bin indi-3rdparty libindi1 libindiclient1 libindi-data libindi-dev indi-dbg"
+    echo "indi-allsky: Releasing hold on INDI packages:"
+    apt-mark unhold $INDI_PKGS
+    echo "INDI packages will now upgrade normally with system updates."
+}
+
+status_indi_hold() {
+    echo "Current APT holds on INDI packages:"
+    SHOW_HOLDS=$(apt-mark showhold | grep -E "indi" || true)
+    if [ -n "$SHOW_HOLDS" ]; then
+        echo "$SHOW_HOLDS"
+    else
+        echo "No INDI packages are currently on hold."
+    fi
+}
+
+ssl_ca_export() {
+    local ca_cert="/etc/indi-allsky/ca/rootCA.pem"
+    local dest="$1"
+
+    if [ ! -f "$ca_cert" ]; then
+        echo "Error: Local Root CA certificate not found at $ca_cert." >&2
+        echo "Please verify that mkcert has initialized the CA." >&2
+        exit 1
+    fi
+
+    if [ -n "$dest" ]; then
+        cp -f "$ca_cert" "$dest"
+        echo "indi-allsky: Exported Root CA certificate to: $dest"
+    else
+        cat "$ca_cert"
+    fi
+}
+
+ssl_renew() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "Error: ssl-renew requires root privileges. Please run with sudo:" >&2
+        echo "  sudo indi-allsky-ctl ssl-renew" >&2
+        exit 1
+    fi
+
+    local force="false"
+    if [ "$1" = "--force" ] || [ "$1" = "-f" ]; then
+        force="true"
+    fi
+
+    local ca_dir="/etc/indi-allsky/ca"
+    if [ ! -f "${ca_dir}/rootCA.pem" ] || [ ! -f "${ca_dir}/rootCA-key.pem" ]; then
+        echo "Error: Local Root CA not found in ${ca_dir}." >&2
+        exit 1
+    fi
+
+    # Detect active web server
+    local web_server=""
+    local crt_path=""
+    local key_path=""
+    local key_group="root"
+    local key_perms="600"
+    local reload_cmd=""
+
+    if systemctl is-active --quiet caddy 2>/dev/null || [ -f "/etc/caddy/Caddyfile" ]; then
+        web_server="caddy"
+        crt_path="/etc/caddy/ssl/indi-allsky_caddy.pem"
+        key_path="/etc/caddy/ssl/indi-allsky_caddy.key"
+        key_group="caddy"
+        key_perms="640"
+        reload_cmd="systemctl reload caddy || systemctl restart caddy"
+    elif systemctl is-active --quiet nginx 2>/dev/null || [ -f "/etc/nginx/sites-available/indi-allsky.conf" ]; then
+        web_server="nginx"
+        crt_path="/etc/nginx/ssl/indi-allsky_nginx.pem"
+        key_path="/etc/nginx/ssl/indi-allsky_nginx.key"
+        key_group="root"
+        key_perms="600"
+        reload_cmd="systemctl reload nginx || systemctl restart nginx"
+    elif systemctl is-active --quiet apache2 2>/dev/null || [ -f "/etc/apache2/sites-available/indi-allsky.conf" ]; then
+        web_server="apache2"
+        crt_path="/etc/apache2/ssl/indi-allsky_apache.pem"
+        key_path="/etc/apache2/ssl/indi-allsky_apache.key"
+        key_group="root"
+        key_perms="600"
+        reload_cmd="systemctl reload apache2 || systemctl restart apache2"
+    fi
+
+    if [ -z "$web_server" ] || [ -z "$crt_path" ]; then
+        echo "indi-allsky: No supported active web server (caddy/nginx/apache2) detected, skipping TLS renewal."
+        return 0
+    fi
+
+    # Check if certificate expires within 30 days (2592000 seconds)
+    local needs_renewal="false"
+    if [ "$force" = "true" ] || [ ! -f "$crt_path" ] || [ ! -f "$key_path" ]; then
+        needs_renewal="true"
+    elif ! openssl x509 -checkend 2592000 -noout -in "$crt_path"; then
+        needs_renewal="true"
+    fi
+
+    if [ "$needs_renewal" = "false" ]; then
+        echo "indi-allsky: Certificate at ${crt_path} is still valid for >30 days. No renewal required."
+        return 0
+    fi
+
+    echo "indi-allsky: Renewing TLS leaf certificate for ${web_server}..."
+    local lan_ips sys_host
+    lan_ips=$(hostname -I 2>/dev/null || ip addr show 2>/dev/null | grep -Po 'inet \K[\d.]+' | grep -v '^127\.' || true)
+    sys_host=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo "indi-allsky")
+
+    mkdir -p "$(dirname "$key_path")" "$(dirname "$crt_path")"
+    CAROOT="$ca_dir" mkcert \
+        -cert-file "$crt_path" \
+        -key-file "$key_path" \
+        "indi-allsky.local" \
+        "${sys_host}.local" \
+        "${sys_host}" \
+        "localhost" \
+        127.0.0.1 \
+        ::1 \
+        $lan_ips
+
+    chown "root:${key_group}" "$key_path" "$crt_path"
+    chmod "$key_perms" "$key_path"
+    chmod 644 "$crt_path"
+
+    eval "$reload_cmd"
+    echo "indi-allsky: TLS leaf certificate renewed successfully for ${web_server}."
+}
+
+check_flask_config() {
+    local flask_config="${INDI_ALLSKY_FLASK_CONFIG:-/etc/indi-allsky/flask.json}"
+    local flask_dir
+    flask_dir="$(dirname "$flask_config")"
+    if { [ -d "$flask_dir" ] && [ ! -x "$flask_dir" ]; } || { [ -f "$flask_config" ] && [ ! -r "$flask_config" ]; }; then
+        echo "Error: Permission denied accessing $flask_config." >&2
+        echo "Please run with sudo:" >&2
+        if [ $# -gt 0 ]; then
+            echo "  sudo indi-allsky-ctl $COMMAND $*" >&2
+        else
+            echo "  sudo indi-allsky-ctl $COMMAND" >&2
+        fi
+        exit 1
+    fi
+}
+
+COMMAND="${1:-}"
+# Normalize --command or -command to command
+COMMAND="${COMMAND#--}"
+COMMAND="${COMMAND#-}"
+shift 2>/dev/null || true
+
+case "$COMMAND" in
+    passwd|reset-pass|user-add|user-list|user-del|\
+    backup-db|expire-images|rebuild-thumbnails|convert-db|validate-db|\
+    flush-images|purge-images|flush-16min-images|flush-recent-images|\
+    merge-cameras|darks|generate-darks|capture-darks|flush-darks|\
+    import-darks|config|reset-config|flush-config|dump-config|\
+    retry-uploads|upload-sync|sync-uploads|\
+    notify|add-notification|test-camera|test-linearity|camera-linearity|\
+    test-sensors|test-devices|test-hardware|test-fans|test-upload|test-transfers|\
+    test-adsb|test-oci|test-websocket|test-ws|profile|system-profile|hardware-profile|\
+    ha-discovery|setup-ha-discovery)
+        check_flask_config "$@"
+        ;;
+esac
+
+case "$COMMAND" in
+    # User & Authentication
+    passwd|reset-pass)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/usertool.py" resetpass "$@"
+        ;;
+    user-add)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/usertool.py" adduser "$@"
+        ;;
+    user-list)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/usertool.py" list "$@"
+        ;;
+    user-del)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/usertool.py" deleteuser "$@"
+        ;;
+
+    # Database & Storage
+    backup-db)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/backup_database.py" "$@"
+        ;;
+    fix-perms|repair-perms)
+        fix_permissions
+        ;;
+    expire-images)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/expire_images.py" "$@"
+        ;;
+    rebuild-thumbnails)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/create_thumbnails.py" "$@"
+        ;;
+    convert-db)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/convert_db.py" "$@"
+        ;;
+    validate-db)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/validate_db_entries.py" "$@"
+        ;;
+    flush-images|purge-images)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/flush_images.py" "$@"
+        ;;
+    flush-16min-images|flush-recent-images)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/flush_16min_images.py" "$@"
+        ;;
+    merge-cameras)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/merge_cameras.py" "$@"
+        ;;
+    optimize-mysql|mysql-optimize)
+        exec bash "${APP_DIR}/misc/mysql_optimize.sh" "$@"
+        ;;
+    darks|generate-darks|capture-darks)
+        exec "$PYTHON_BIN" "${APP_DIR}/darks.py" "$@"
+        ;;
+    flush-darks)
+        exec "$PYTHON_BIN" "${APP_DIR}/darks.py" flush "$@"
+        ;;
+    import-darks)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/import_darks_frames.py" "$@"
+        ;;
+    config)
+        exec "$PYTHON_BIN" "${APP_DIR}/config.py" "$@"
+        ;;
+    reset-config)
+        echo "indi-allsky: Resetting configuration to default values..."
+        "$PYTHON_BIN" "${APP_DIR}/config.py" flush --force "$@"
+        "$PYTHON_BIN" "${APP_DIR}/config.py" bootstrap
+        echo "indi-allsky: Configuration has been reset to defaults."
+        ;;
+    flush-config)
+        exec "$PYTHON_BIN" "${APP_DIR}/config.py" flush "$@"
+        ;;
+    dump-config)
+        exec "$PYTHON_BIN" "${APP_DIR}/config.py" dump "$@"
+        ;;
+    retry-uploads|upload-sync|sync-uploads)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/upload_sync.py" "$@"
+        ;;
+    notify|add-notification)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/add_notification.py" "$@"
+        ;;
+
+    # Hardware & Diagnostics
+    test-camera)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/camera_test.py" "$@"
+        ;;
+    list-cameras)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/indi_list_cameras.py" "$@"
+        ;;
+    camera-info)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/camera_info.py" "$@"
+        ;;
+    camera-props|camera-properties)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/camera_properties.py" "$@"
+        ;;
+    test-linearity|camera-linearity)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/camera_linearity.py" "$@"
+        ;;
+    test-sensors)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/sensor_test.py" "$@"
+        ;;
+    test-devices|test-hardware|test-fans)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/device_test.py" "$@"
+        ;;
+    test-upload|test-transfers)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/upload_test.py" "$@"
+        ;;
+    test-adsb)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/adsb_test.py" "$@"
+        ;;
+    test-oci)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/oci_config_test.py" "$@"
+        ;;
+    test-websocket|test-ws)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/test_websocket_events.py" "$@"
+        ;;
+<<<<<<<
+    mcp)
+        case "${1:-}" in
+            enable)
+                sudo systemctl enable --now indi-allsky-mcp.service
+                echo "indi-allsky: MCP server daemon enabled and started."
+                ;;
+            disable)
+                sudo systemctl disable --now indi-allsky-mcp.service
+                echo "indi-allsky: MCP server daemon stopped and disabled."
+                ;;
+            start)
+                sudo systemctl start indi-allsky-mcp.service
+                echo "indi-allsky: MCP server daemon started."
+                ;;
+            stop)
+                sudo systemctl stop indi-allsky-mcp.service
+                echo "indi-allsky: MCP server daemon stopped."
+                ;;
+            restart)
+                sudo systemctl restart indi-allsky-mcp.service
+                echo "indi-allsky: MCP server daemon restarted."
+                ;;
+            status)
+                systemctl status indi-allsky-mcp.service --no-pager
+                ;;
+            logs)
+                journalctl -u indi-allsky-mcp.service -f
+                ;;
+            run)
+                shift
+                exec "$PYTHON_BIN" "${APP_DIR}/misc/indi_allsky_mcp.py" "$@"
+                ;;
+            "")
+                exec "$PYTHON_BIN" "${APP_DIR}/misc/indi_allsky_mcp.py"
+                ;;
+            *)
+                exec "$PYTHON_BIN" "${APP_DIR}/misc/indi_allsky_mcp.py" "$@"
+                ;;
+        esac
+=======
+    profile|system-profile|hardware-profile)
+        exec "$PYTHON_BIN" "${APP_DIR}/config.py" profile "$@"
+>>>>>>>
+        ;;
+    support-info)
+        exec bash "${APP_DIR}/misc/support_info.sh" "$@"
+        ;;
+
+    # Peripheral Helpers & Integrations
+    disable-leds|setup-leds)
+        exec bash "${APP_DIR}/misc/setup_disable_leds.sh" "$@"
+        ;;
+    setup-mqtt|setup-mosquitto)
+        exec bash "${APP_DIR}/misc/setup_mosquitto_mqtt.sh" "$@"
+        ;;
+    ha-discovery|setup-ha-discovery)
+        exec "$PYTHON_BIN" "${APP_DIR}/misc/home_assistant_auto_discovery.py" "$@"
+        ;;
+    setup-gps)
+        exec bash "${APP_DIR}/misc/setup_gpsd.sh" "$@"
+        ;;
+    setup-hotspot)
+        exec bash "${APP_DIR}/misc/setup_hotspot.sh" "$@"
+        ;;
+    setup-rtc)
+        exec bash "${APP_DIR}/misc/setup_rtc_i2c.sh" "$@"
+        ;;
+    setup-usb-mount)
+        exec bash "${APP_DIR}/misc/setup_usb_automount.sh" "$@"
+        ;;
+
+    # Security & TLS Certificates
+    ssl-ca-export|ssl-ca)
+        ssl_ca_export "$@"
+        ;;
+    ssl-renew|renew-ssl)
+        ssl_renew "$@"
+        ;;
+
+    # Package & Driver Management
+    protect-source-indi)
+        protect_source_indi
+        ;;
+    hold-indi|pin-indi)
+        hold_indi
+        ;;
+    unhold-indi|unpin-indi)
+        unhold_indi
+        ;;
+    status-indi-hold|show-indi-hold)
+        status_indi_hold
+        ;;
+
+    # Service Control
+    status)
+        systemctl status indi-allsky.service gunicorn-indi-allsky.service --no-pager
+        ;;
+    restart)
+        sudo systemctl restart indi-allsky.service gunicorn-indi-allsky.service
+        echo "indi-allsky: Services restarted."
+        ;;
+    logs)
+        journalctl -u indi-allsky.service -u gunicorn-indi-allsky.service -f
+        ;;
+
+    help|--help|-h|"")
+        show_help
+        ;;
+    *)
+        echo "Unknown command: $COMMAND"
+        echo "Run 'indi-allsky-ctl --help' for available commands."
+        exit 1
+        ;;
+esac

@@ -244,7 +244,7 @@ def main() -> int:
             status_res = run_command(["git", "status", "--porcelain"], cwd=workspace, check=False)
             lines = status_res.stdout.splitlines()
             for line in lines:
-                if line.startswith("UD "):
+                if line.startswith("UD ") or line.startswith("DU "):
                     deleted_file = line[3:].strip()
                     run_command(["git", "rm", deleted_file], cwd=workspace, check=False)
 

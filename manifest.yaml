@@ -135,6 +135,10 @@ pull_requests:
     title: "Feature: Dark library builder and dark management in the UI"
     author: "321MathiasS123"
 
+  - id: 3320
+    title: "feat(config): simple and expert settings mode with live search"
+    author: "TN-1"
+
 # ------------------------------------------------------------------------------
 # External Branches (Branches not yet submitted or pending upstream PR)
 # ------------------------------------------------------------------------------
