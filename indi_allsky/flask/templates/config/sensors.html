@@ -50,7 +50,7 @@
                                     <div id="TEMP_SENSOR__{{ letter }}_I2C_ADDRESS-error" class="tw:text-error tw:text-xs tw:mt-1" style="display: none;"></div>
                                 </div>
                             </div>
-                            <div class="tw:grid tw:grid-cols-1 sm:tw:grid-cols-2 md:tw:grid-cols-4 tw:gap-4">
+                            <div class="tw:grid tw:grid-cols-1 sm:tw:grid-cols-2 md:tw:grid-cols-4 tw:gap-4 config-expert">
                                 <div class="tw:flex tw:flex-col tw:gap-1">
                                     <span class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:text-base-content/80">{{ form_config['TEMP_SENSOR__' + letter + '_PIN_1'].label.text }}</span>
                                     {{ form_config['TEMP_SENSOR__' + letter + '_PIN_1'](class='tw:input tw:input-bordered tw:input-sm tw:h-11 tw:bg-base-200 tw:text-base-content tw:w-full') }}
@@ -152,7 +152,7 @@
         </div>
 
         <!-- Specific Sensor Hardware Tweaks Card -->
-        <div class="tw:card tw:bg-base-200 tw:border tw:border-base-300 tw:rounded-[var(--radius-box)] shadow-sm">
+        <div class="tw:card tw:bg-base-200 tw:border tw:border-base-300 tw:rounded-[var(--radius-box)] shadow-sm config-expert">
             <div class="tw:card-body tw:p-6 tw:flex tw:flex-col tw:gap-4">
                 <span class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">Specific Sensor Hardware Adjustments (Heaters & Logic)</span>
                 <p class="tw:text-xs tw:text-base-content/60">
@@ -237,7 +237,7 @@
         </div>
 
         <!-- Light & Optical Sensors Card -->
-        <div class="tw:card tw:bg-base-200 tw:border tw:border-base-300 tw:rounded-[var(--radius-box)] shadow-sm">
+        <div class="tw:card tw:bg-base-200 tw:border tw:border-base-300 tw:rounded-[var(--radius-box)] shadow-sm config-expert">
             <div class="tw:card-body tw:p-6 tw:flex tw:flex-col tw:gap-4">
                 <div class="tw:flex tw:items-center tw:justify-between">
                     <span class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">Ambient Light & Optical Sensors (TSL, VEML, SI1145, LTR390)</span>
@@ -365,7 +365,7 @@
         </div>
 
         <!-- Power Sensors Card -->
-        <div class="tw:card tw:bg-base-200 tw:border tw:border-base-300 tw:rounded-[var(--radius-box)] shadow-sm">
+        <div class="tw:card tw:bg-base-200 tw:border tw:border-base-300 tw:rounded-[var(--radius-box)] shadow-sm config-expert">
             <div class="tw:card-body tw:p-6 tw:flex tw:flex-col tw:gap-4">
                 <span class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">INA3221 Power Channels</span>
 
@@ -391,7 +391,7 @@
         </div>
 
         <!-- Lightning Sensors Card -->
-        <div class="tw:card tw:bg-base-200 tw:border tw:border-base-300 tw:rounded-[var(--radius-box)] shadow-sm">
+        <div class="tw:card tw:bg-base-200 tw:border tw:border-base-300 tw:rounded-[var(--radius-box)] shadow-sm config-expert">
             <div class="tw:card-body tw:p-6 tw:flex tw:flex-col tw:gap-4">
                 <span class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">AS3935 Lightning Detector</span>
 
@@ -427,7 +427,7 @@
         </div>
 
         <!-- Sensor MQTT Telemetry Card -->
-        <div class="tw:card tw:bg-base-200 tw:border tw:border-base-300 tw:rounded-[var(--radius-box)] shadow-sm">
+        <div class="tw:card tw:bg-base-200 tw:border tw:border-base-300 tw:rounded-[var(--radius-box)] shadow-sm config-expert">
             <div class="tw:card-body tw:p-6 tw:flex tw:flex-col tw:gap-4">
                 <span class="tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-widest tw:text-base-content/50">Sensor Telemetry MQTT Connection</span>
 
