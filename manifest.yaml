@@ -23,6 +23,10 @@ package:
 # ------------------------------------------------------------------------------
 pull_requests:
   # --- Core Stability & Security ---
+  - id: 3342
+    title: "Add an Astrophotography Companion to the live view"
+    author: "Rob0xFF"
+
   - id: 3338
     title: "feat: implement OIDC back-channel logout and fix premature session termination"
     author: "TN-1"
