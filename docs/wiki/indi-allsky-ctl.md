@@ -367,6 +367,14 @@ indi-allsky-ctl mcp run --transport stdio
 ```
 *(For detailed tool reference, resources, and client connection configs, see the [Model Context Protocol (MCP)](Model-Context-Protocol-(MCP)) guide).*
 
+### System Hardware Profile & Resource Presets
+Inspect detected host physical memory, swap space, CPU core count, assigned hardware tier, and auto-tuned presets:
+```bash
+indi-allsky-ctl profile
+# Alias:
+indi-allsky-ctl system-profile
+```
+
 ### Generate Diagnostic Support Bundle
 Generate a redacted diagnostic report containing system logs, hardware configurations, and environment details for troubleshooting:
 ```bash

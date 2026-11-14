@@ -1381,6 +1381,21 @@
         visibility: visible;
       }
     }
+    .tw\:collapse-open {
+      grid-template-rows: max-content 1fr;
+    }
+    .tw\:collapse-open > .tw\:collapse-content {
+      --overflow-delay: 0.2s;
+      overflow: revert-layer;
+      content-visibility: visible;
+      min-height: fit-content;
+      padding-bottom: 1rem;
+    }
+    @supports not (content-visibility: visible) {
+      .tw\:collapse-open > .tw\:collapse-content {
+        visibility: visible;
+      }
+    }
   }
   .tw\:collapse {
     visibility: collapse;
@@ -2827,6 +2842,9 @@
   .tw\:top-full {
     top: 100%;
   }
+  .tw\:right-0 {
+    right: 0px;
+  }
   .tw\:right-2 {
     right: calc(var(--tw-spacing) * 2);
   }
@@ -2844,6 +2862,9 @@
   }
   .tw\:left-2 {
     left: calc(var(--tw-spacing) * 2);
+  }
+  .tw\:left-3 {
+    left: calc(var(--tw-spacing) * 3);
   }
   .tw\:left-3\.5 {
     left: calc(var(--tw-spacing) * 3.5);
@@ -3145,6 +3166,8 @@
     .tw\:textarea:has( > textarea[disabled]) > textarea[disabled] {
       cursor: not-allowed;
     }
+  }
+  @layer daisyui.l1.l2.l3 {
     .tw\:modal-backdrop {
       grid-column-start: 1;
       grid-row-start: 1;
@@ -3855,6 +3878,9 @@
   .tw\:mt-2 {
     margin-top: calc(var(--tw-spacing) * 2);
   }
+  .tw\:mt-2\.5 {
+    margin-top: calc(var(--tw-spacing) * 2.5);
+  }
   .tw\:mt-3 {
     margin-top: calc(var(--tw-spacing) * 3);
   }
@@ -4203,7 +4229,7 @@
     mask-repeat: no-repeat;
     -webkit-mask-size: 100% 100%;
     mask-size: 100% 100%;
-    --svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cg fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12l2 2l4-4'/%3E%3C/g%3E%3C/svg%3E");
+    --svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cg fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m16 9l-5.5 5.5L8 12'/%3E%3C/g%3E%3C/svg%3E");
   }
   .tw\:icon-\[lucide--clock\] {
     display: inline-block;
@@ -4959,6 +4985,19 @@
     mask-size: 100% 100%;
     --svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cg fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'%3E%3Cpath d='m13.5 8.5l-5 5m0-5l5 5'/%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21l-4.3-4.3'/%3E%3C/g%3E%3C/svg%3E");
   }
+  .tw\:icon-\[lucide--search\] {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    background-color: currentColor;
+    -webkit-mask-image: var(--svg);
+    mask-image: var(--svg);
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+    --svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cg fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'%3E%3Cpath d='m21 21l-4.34-4.34'/%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3C/g%3E%3C/svg%3E");
+  }
   .tw\:icon-\[lucide--server\] {
     display: inline-block;
     width: 1em;
@@ -5323,6 +5362,32 @@
     mask-size: 100% 100%;
     --svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cg fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21l-4.35-4.35M11 8v6m-3-3h6'/%3E%3C/g%3E%3C/svg%3E");
   }
+  .tw\:kbd {
+    box-shadow: none;
+    @layer daisyui.l1.l2.l3 {
+      display: inline-flex;
+      flex-shrink: 0;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius-field);
+      background-color: var(--color-base-200);
+      vertical-align: middle;
+      color: var(--color-base-content);
+      padding-inline: 0.5em;
+      border: var(--border) solid var(--color-base-content);
+      @supports (color: color-mix(in lab, red, red)) {
+        border: var(--border) solid color-mix(in srgb, var(--color-base-content) 20%, #0000);
+      }
+      border-bottom: calc(var(--border) + 1px) solid var(--color-base-content);
+      @supports (color: color-mix(in lab, red, red)) {
+        border-bottom: calc(var(--border) + 1px) solid color-mix(in srgb, var(--color-base-content) 20%, #0000);
+      }
+      --size: calc(var(--size-selector, 0.25rem) * 6);
+      font-size: 0.875rem;
+      height: var(--size);
+      min-width: var(--size);
+    }
+  }
   @layer daisyui.l1.l2.l3 {
     .tw\:stat {
       display: inline-grid;
@@ -5558,6 +5623,9 @@
   .tw\:max-h-\[calc\(100dvh-14rem\)\] {
     max-height: calc(100dvh - 14rem);
   }
+  .tw\:max-h-\[min\(22rem\,55vh\)\] {
+    max-height: min(22rem, 55vh);
+  }
   .tw\:max-h-full {
     max-height: 100%;
   }
@@ -5670,6 +5738,9 @@
   }
   .tw\:max-w-5xl {
     max-width: var(--tw-container-5xl);
+  }
+  .tw\:max-w-\[130px\] {
+    max-width: 130px;
   }
   .tw\:max-w-\[400px\] {
     max-width: 400px;
@@ -6232,6 +6303,12 @@
   .tw\:bg-base-200 {
     background-color: var(--color-base-200);
   }
+  .tw\:bg-base-200\/30 {
+    background-color: var(--color-base-200);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-base-200) 30%, transparent);
+    }
+  }
   .tw\:bg-base-200\/35 {
     background-color: var(--color-base-200);
     @supports (color: color-mix(in lab, red, red)) {
@@ -6622,6 +6699,9 @@
   .tw\:pr-10 {
     padding-right: calc(var(--tw-spacing) * 10);
   }
+  .tw\:pr-20 {
+    padding-right: calc(var(--tw-spacing) * 20);
+  }
   .tw\:pb-1 {
     padding-bottom: var(--tw-spacing);
   }
@@ -6702,6 +6782,10 @@
       font-size: 0.75rem;
     }
     .tw\:badge-xs {
+      --size: calc(var(--size-selector, 0.25rem) * 4);
+      font-size: 0.625rem;
+    }
+    .tw\:kbd-xs {
       --size: calc(var(--size-selector, 0.25rem) * 4);
       font-size: 0.625rem;
     }
@@ -7350,6 +7434,12 @@
     .tw\:toggle-primary[aria-checked="true"] {
       --input-color: var(--color-primary);
     }
+    .tw\:toggle-secondary:checked {
+      --input-color: var(--color-secondary);
+    }
+    .tw\:toggle-secondary[aria-checked="true"] {
+      --input-color: var(--color-secondary);
+    }
     .tw\:toggle-sm:is([type="checkbox"]) {
       --size: calc(var(--size-selector, 0.25rem) * 5);
     }
@@ -7385,6 +7475,16 @@
     .tw\:aura:has( > .tw\:checkbox,  > .tw\:toggle,  > .tw\:badge) {
       --aura-radius: var(--radius-selector);
     }
+    .tw\:aura:has( > .tw\:btn,  > .tw\:input,  > .tw\:select) {
+      --aura-radius: var(--radius-field);
+    }
+  }
+  @layer daisyui.l1.l2 {
+    .tw\:range-sm {
+      --range-thumb-size: calc(var(--size-selector, 0.25rem) * 5);
+    }
+  }
+  @layer daisyui.l1.l2.l3 {
     .tw\:aura:has( > .tw\:btn,  > .tw\:input,  > .tw\:select) {
       --aura-radius: var(--radius-field);
     }
@@ -7438,6 +7538,9 @@
     }
     .tw\:sm\:grid-cols-2 {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .tw\:sm\:grid-cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
     .tw\:sm\:grid-cols-\[10rem_1fr\] {
       grid-template-columns: 10rem 1fr;
@@ -7868,10 +7971,47 @@ calendar-select-month::part(option):disabled, calendar-select-year::part(option)
     filter: blur(3px) hue-rotate(360deg);
   }
 }
+#form_config.mode-simple .config-expert {
+  display: none !important;
+}
+input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webkit-search-decoration, input[type="search"]::-webkit-search-results-button, input[type="search"]::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}
 .field-highlight {
-  background-color: rgba(255, 193, 7, 0.15);
-  outline: 1px solid rgba(255, 193, 7, 0.5);
-  border-radius: 4px;
+  background-color: rgba(59, 130, 246, 0.12) !important;
+  outline: 2px solid #3b82f6 !important;
+  outline-offset: 2px !important;
+  border-radius: var(--radius-box, 0.5rem) !important;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.25) !important;
+  transition: background-color 0.4s ease, outline 0.4s ease, box-shadow 0.4s ease !important;
+  animation: field-pulse 2s ease-out;
+}
+@keyframes field-pulse {
+  0% {
+    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.25);
+  }
+}
+.parent-toggle-flashing {
+  outline: 2px solid #f59e0b !important;
+  outline-offset: 2px !important;
+  background-color: rgba(245, 158, 11, 0.15) !important;
+  border-radius: var(--radius-box, 0.5rem) !important;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.35) !important;
+  transition: all 0.3s ease !important;
+  animation: parent-toggle-flash 1.2s ease-in-out infinite alternate !important;
+}
+@keyframes parent-toggle-flash {
+  0% {
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+  }
+  100% {
+    box-shadow: 0 0 0 8px rgba(245, 158, 11, 0.55);
+  }
 }
 @layer base {
   :where(:root),:root:has(input.theme-controller[value=light]:checked),[data-theme=light] {
