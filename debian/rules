@@ -1,5 +1,19 @@
 #!/usr/bin/make -f
 
+# Debhelper maps debian/<pkg>.* files to the declared binary package name.
+# Mirror debian/indi-allsky.* for downstream variants (e.g. indi-allsky-edge).
+ifneq ($(filter clean, $(MAKECMDGOALS)), clean)
+$(shell \
+	PKG=$$(grep -m1 '^Package:' debian/control | awk '{print $$2}'); \
+	if [ -n "$$PKG" ] && [ "$$PKG" != "indi-allsky" ]; then \
+		for f in debian/indi-allsky.*; do \
+			ext="$${f#debian/indi-allsky.}"; \
+			[ ! -e "debian/$${PKG}.$${ext}" ] && cp -a "$$f" "debian/$${PKG}.$${ext}"; \
+		done; \
+	fi \
+)
+endif
+
 %:
 	dh $@
 
@@ -63,8 +77,12 @@ override_dh_installsystemd:
 
 override_dh_fixperms:
 	dh_fixperms
-	chmod 440 debian/indi-allsky/etc/sudoers.d/indi-allsky 2>/dev/null || true
+	chmod 440 debian/*/etc/sudoers.d/indi-allsky 2>/dev/null || true
 
 override_dh_auto_clean:
 	rm -rf debian/venv debian/bundle debian/wheels
+	@PKG=$$(grep -m1 '^Package:' debian/control | awk '{print $$2}'); \
+	if [ -n "$$PKG" ] && [ "$$PKG" != "indi-allsky" ]; then \
+		rm -f debian/$${PKG}.*; \
+	fi
 	dh_auto_clean
