@@ -37,6 +37,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm.exc import NoResultFound
 
 from .. import constants
+from ..temperature import database_temperature
 #from ..exceptions import BadImage
 
 logger = logging.getLogger('indi_allsky')
@@ -158,6 +159,18 @@ class miscDb(object):
 
         # update entries
         for k, v in metadata.get('data', {}).items():
+            if k == 'camera_capabilities':
+                # Live reconnects replace the capability snapshot. Preserve
+                # dimensions learned from actual FITS output until the same
+                # source ROI is observed again.
+                existing_capabilities = dict(camera_data.get(k) or {})
+                existing_frame = dict(existing_capabilities.get('frame') or {})
+                learned_dimensions = existing_frame.get('binning_dimensions')
+                if learned_dimensions:
+                    v = dict(v or {})
+                    frame_data = dict(v.get('frame') or {})
+                    frame_data['binning_dimensions'] = learned_dimensions
+                    v['frame'] = frame_data
             camera_data[k] = v
 
         camera.data = camera_data
@@ -382,7 +395,14 @@ class miscDb(object):
         return image
 
 
-    def addDarkFrame(self, filename, camera_id, metadata):
+    def addDarkFrame(
+            self,
+            filename,
+            camera_id,
+            metadata,
+            commit=True,
+            preserve_zero_temperature=False,
+    ):
 
         ### expected metadata
         #{
@@ -417,12 +437,12 @@ class miscDb(object):
         exposure_int = int(metadata['exposure'])
 
 
-        # If temp is 0, write null
-        if metadata['temp']:
-            temp_val = float(metadata['temp'])
-        else:
+        temp_val = database_temperature(
+            metadata['temp'],
+            preserve_zero=preserve_zero_temperature,
+        )
+        if temp_val is None:
             logger.warning('Temperature is not defined')
-            temp_val = None
 
 
         dark = IndiAllSkyDbDarkFrameTable(
@@ -439,16 +459,25 @@ class miscDb(object):
             height=metadata['height'],
             width=metadata['width'],
             thumbnail_uuid=metadata.get('thumbnail_uuid'),
+            active=bool(metadata.get('active', True)),
             data=metadata.get('data', {}),
         )
 
         db.session.add(dark)
-        db.session.commit()
+        if commit:
+            db.session.commit()
 
         return dark
 
 
-    def addBadPixelMap(self, filename, camera_id, metadata):
+    def addBadPixelMap(
+            self,
+            filename,
+            camera_id,
+            metadata,
+            commit=True,
+            preserve_zero_temperature=False,
+    ):
 
         ### expected metadata
         #{
@@ -483,12 +512,12 @@ class miscDb(object):
         exposure_int = int(metadata['exposure'])
 
 
-        # If temp is 0, write null
-        if metadata['temp']:
-            temp_val = float(metadata['temp'])
-        else:
+        temp_val = database_temperature(
+            metadata['temp'],
+            preserve_zero=preserve_zero_temperature,
+        )
+        if temp_val is None:
             logger.warning('Temperature is not defined')
-            temp_val = None
 
 
         bpm = IndiAllSkyDbBadPixelMapTable(
@@ -505,11 +534,13 @@ class miscDb(object):
             height=metadata['height'],
             width=metadata['width'],
             thumbnail_uuid=metadata.get('thumbnail_uuid'),
+            active=bool(metadata.get('active', True)),
             data=metadata.get('data', {}),
         )
 
         db.session.add(bpm)
-        db.session.commit()
+        if commit:
+            db.session.commit()
 
         return bpm
 
@@ -1553,4 +1584,3 @@ class miscDb(object):
         db.session.commit()
 
         return keogram_entry
-
