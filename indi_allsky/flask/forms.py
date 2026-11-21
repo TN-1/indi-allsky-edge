@@ -4721,6 +4721,7 @@ class IndiAllskyConfigForm(FlaskForm):
     LOCATION_LATITUDE                = FloatField('Latitude', validators=[LOCATION_LATITUDE_validator])
     LOCATION_LONGITUDE               = FloatField('Longitude', validators=[LOCATION_LONGITUDE_validator])
     LOCATION_ELEVATION               = IntegerField('Elevation', validators=[LOCATION_ELEVATION_validator])
+    SMOKE_ENABLE                     = BooleanField('Enable NOAA HMS Smoke Data')
     TIMELAPSE_ENABLE                 = BooleanField('Enable Timelapse Creation')
     TIMELAPSE_SKIP_FRAMES            = IntegerField('Timelapse Skip Frames', validators=[TIMELAPSE_SKIP_FRAMES_validator])
     TIMELAPSE__PRE_PROCESSOR         = SelectField('Timelapse Processing (Night)', choices=TIMELAPSE__PRE_PROCESSOR_choices, validators=[TIMELAPSE__PRE_PROCESSOR_validator])
@@ -6607,6 +6608,7 @@ class IndiAllskyImageViewer(FlaskForm):
         self.s3_prefix = kwargs.get('s3_prefix', '')
         self.camera_id = kwargs.get('camera_id')
         self.local = kwargs.get('local')
+        self.smoke_enable = kwargs.get('smoke_enable', True)
         self.asi676mc_diagnostic_download_enabled = kwargs.get(
             'asi676mc_diagnostic_download_enabled',
             False,
@@ -7277,6 +7279,7 @@ class IndiAllskyGalleryViewer(FlaskForm):
         self.s3_prefix = kwargs.get('s3_prefix', '')
         self.camera_id = kwargs.get('camera_id')
         self.local = kwargs.get('local')
+        self.smoke_enable = kwargs.get('smoke_enable', True)
         requested_statuses = kwargs.get('asi676mc_statuses', ())
         self.asi676mc_statuses = tuple(
             status
@@ -7637,6 +7640,7 @@ class IndiAllskyVideoViewer(FlaskForm):
         self.s3_prefix = kwargs.get('s3_prefix', '')
         self.camera_id = kwargs.get('camera_id')
         self.local = kwargs.get('local')
+        self.smoke_enable = kwargs.get('smoke_enable', True)
 
 
     def getYears(self):
@@ -7797,7 +7801,7 @@ class IndiAllskyVideoViewer(FlaskForm):
                 'dayDate_long'      : v.dayDate.strftime('%B %d, %Y'),
                 'dayDate'           : v.dayDate.strftime('%Y%m%d'),
                 'night'             : v.night,
-                'max_smoke_rating'  : constants.SMOKE_RATING_MAP_STR[data.get('max_smoke_rating', constants.SMOKE_RATING_NODATA)],
+                'max_smoke_rating'  : constants.SMOKE_RATING_MAP_STR.get(data.get('max_smoke_rating'), '') if self.smoke_enable and data.get('max_smoke_rating', constants.SMOKE_RATING_NODATA) != constants.SMOKE_RATING_NODATA else '',
                 'max_kpindex'       : data.get('max_kpindex', 0.0),
                 'max_ovation_max'   : data.get('max_ovation_max', 0),
                 'max_moonphase'     : data.get('max_moonphase', 0),  # might be null
@@ -8098,6 +8102,7 @@ class IndiAllskyMiniVideoViewer(FlaskForm):
         self.s3_prefix = kwargs.get('s3_prefix', '')
         self.camera_id = kwargs.get('camera_id')
         self.local = kwargs.get('local')
+        self.smoke_enable = kwargs.get('smoke_enable', True)
 
 
     def getYears(self):
@@ -8271,7 +8276,7 @@ class IndiAllskyMiniVideoViewer(FlaskForm):
                 'dayDate'           : v.dayDate.strftime('%Y%m%d'),
                 'night'             : v.night,
                 'note'              : v.note,
-                'max_smoke_rating'  : constants.SMOKE_RATING_MAP_STR[data.get('max_smoke_rating', constants.SMOKE_RATING_NODATA)],
+                'max_smoke_rating'  : constants.SMOKE_RATING_MAP_STR.get(data.get('max_smoke_rating'), '') if self.smoke_enable and data.get('max_smoke_rating', constants.SMOKE_RATING_NODATA) != constants.SMOKE_RATING_NODATA else '',
                 'max_kpindex'       : data.get('max_kpindex', 0.0),
                 'max_ovation_max'   : data.get('max_ovation_max', 0),
                 'max_moonphase'     : data.get('max_moonphase', 0),  # might be null
