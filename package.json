@@ -17,10 +17,10 @@
     "screenshots": "python3 misc/generate_screenshots.py"
   },
   "devDependencies": {
-    "@iconify-json/lucide": "^1.2.137",
+    "@iconify-json/lucide": "^1.2.148",
     "@iconify/tailwind4": "^1.1.4",
     "@tailwindcss/cli": "^4.3.3",
-    "daisyui": "^5.7.46",
+    "daisyui": "^5.7.50",
     "tailwindcss": "^4.3.3"
   },
   "dependencies": {
