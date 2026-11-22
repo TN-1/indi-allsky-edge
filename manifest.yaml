@@ -183,6 +183,30 @@ pull_requests:
     title: "Add WeatherFlow Tempest REST API and local UDP sensor support"
     author: "TN-1"
 
+  - id: 3356
+    title: "Add automated edge PR labelling and stale issue/PR management workflows"
+    author: "TN-1"
+
+  - id: 3357
+    title: "Add Aurora probability filter to Gallery and Image Viewer"
+    author: "TN-1"
+
+  - id: 3358
+    title: "Add Open-Drain GPIO support for generic GPIO, fans, and dew heaters"
+    author: "TN-1"
+
+  - id: 3359
+    title: "Add GPS Info diagnostic page to Tools menu"
+    author: "TN-1"
+
+  - id: 3360
+    title: "Support list-based multi-fan instantiation and control"
+    author: "TN-1"
+
+  - id: 3361
+    title: "Add ADS-B aircraft reticle overlay for saved images and VirtualSky Web UI"
+    author: "TN-1"
+
   - id: 3116
     title: "Feature: Test Suite"
     author: "TN-1"

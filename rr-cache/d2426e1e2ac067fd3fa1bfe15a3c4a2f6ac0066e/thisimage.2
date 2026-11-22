@@ -120,6 +120,8 @@ from .forms import IndiAllskyConfigForm
 from .forms import IndiAllskyChartConfigForm
 from .forms import IndiAllskyImageViewer
 from .forms import IndiAllskyImageViewerPreload
+from .forms import DEFAULT_AURORA_MIN
+from .forms import normalize_aurora_min
 from .forms import IndiAllskyFitsImageViewer
 from .forms import IndiAllskyFitsImageViewerPreload
 from .forms import IndiAllskyGalleryViewer
@@ -4214,6 +4216,12 @@ class ConfigView(FormView):
             context['fan_target_high_str'] = 'n/a'
             context['fan_status_str'] = 'n/a'
 
+        from ..sensor import normalize_fan_config
+        context['fans_extra'] = [
+            normalize_fan_config(f)
+            for f in (self.indi_allsky_config.get('FANS') or [])
+            if isinstance(f, dict)
+        ]
 
         form_data = {
             'CAMERA_INTERFACE'               : self.indi_allsky_config.get('CAMERA_INTERFACE', 'indi'),
@@ -5851,6 +5859,13 @@ class AjaxConfigView(BaseView):
         self.indi_allsky_config['FAN']['THOLD_DIFF_HIGH']               = int(request.json['FAN__THOLD_DIFF_HIGH'])
         self.indi_allsky_config['FAN']['HOLD_SECONDS']                  = int(request.json['FAN__HOLD_SECONDS'])
         self.indi_allsky_config['FAN']['PWM_FREQUENCY']                 = int(request.json['FAN__PWM_FREQUENCY'])
+        if 'FANS' in request.json and isinstance(request.json['FANS'], list):
+            from ..sensor import normalize_fan_config
+            self.indi_allsky_config['FANS'] = [
+                normalize_fan_config(f)
+                for f in request.json['FANS']
+                if isinstance(f, dict)
+            ]
         self.indi_allsky_config['GENERIC_GPIO']['A_CLASSNAME']          = str(request.json['GENERIC_GPIO__A_CLASSNAME'])
         self.indi_allsky_config['GENERIC_GPIO']['A_I2C_ADDRESS']        = str(request.json['GENERIC_GPIO__A_I2C_ADDRESS'])
         self.indi_allsky_config['GENERIC_GPIO']['A_PIN_1']              = str(request.json['GENERIC_GPIO__A_PIN_1'])
@@ -6360,12 +6375,14 @@ class ImageViewerView(FormView):
         context = super(ImageViewerView, self).get_context()
 
         form_data = {
-            'CAMERA_ID'    : self.camera.id,
-            'YEAR_SELECT'  : None,
-            'MONTH_SELECT' : None,
-            'DAY_SELECT'   : None,
-            'HOUR_SELECT'  : None,
+            'CAMERA_ID'         : self.camera.id,
+            'YEAR_SELECT'       : None,
+            'MONTH_SELECT'      : None,
+            'DAY_SELECT'        : None,
+            'HOUR_SELECT'       : None,
             'FILTER_DETECTIONS' : None,
+            'FILTER_AURORA'     : None,
+            'FILTER_AURORA_MIN' : DEFAULT_AURORA_MIN,
         }
 
 
@@ -6406,6 +6423,8 @@ class AjaxImageViewerView(BaseView):
         form_day   = int(request.json.get('DAY_SELECT', 0))
         form_hour  = int(request.json.get('HOUR_SELECT', -1))  # 0 is a real hour
         form_filter_detections = bool(request.json.get('FILTER_DETECTIONS'))
+        form_filter_aurora = bool(request.json.get('FILTER_AURORA'))
+        aurora_min = normalize_aurora_min(request.json.get('FILTER_AURORA_MIN')) if form_filter_aurora else 0
 
         self.cameraSetup(camera_id=camera_id)
 
@@ -6422,25 +6441,15 @@ class AjaxImageViewerView(BaseView):
         )
 
 
-        if form_filter_detections:
-            # filter images that have a detection
-            form_viewer = IndiAllskyImageViewer(
-                data=request.json,
-                camera_id=camera_id,
-                detections_count=1,
-                asi676mc_diagnostic_download_enabled=asi676mc_diagnostic_download_enabled,
-                s3_prefix=self.s3_prefix,
-                local=local,
-            )
-        else:
-            form_viewer = IndiAllskyImageViewer(
-                data=request.json,
-                camera_id=camera_id,
-                detections_count=0,
-                asi676mc_diagnostic_download_enabled=asi676mc_diagnostic_download_enabled,
-                s3_prefix=self.s3_prefix,
-                local=local,
-            )
+        form_viewer = IndiAllskyImageViewer(
+            data=request.json,
+            camera_id=camera_id,
+            detections_count=1 if form_filter_detections else 0,
+            aurora_min=aurora_min,
+            asi676mc_diagnostic_download_enabled=asi676mc_diagnostic_download_enabled,
+            s3_prefix=self.s3_prefix,
+            local=local,
+        )
 
 
         json_data = {}
@@ -6885,6 +6894,8 @@ class GalleryViewerView(FormView):
             'DAY_SELECT'   : None,
             'HOUR_SELECT'  : None,
             'FILTER_DETECTIONS' : None,
+            'FILTER_AURORA'     : None,
+            'FILTER_AURORA_MIN' : DEFAULT_AURORA_MIN,
             'FILTER_ASI676MC_REPAIRED' : None,
             'FILTER_ASI676MC_EXCLUDED' : None,
             'FILTER_ASI676MC_FAILED' : None,
@@ -6925,6 +6936,8 @@ class AjaxGalleryViewerView(BaseView):
         hour_val   = request.json.get('HOUR_SELECT')
         form_hour  = int(hour_val) if hour_val is not None and hour_val != '' else -1
         form_filter_detections = bool(request.json.get('FILTER_DETECTIONS'))
+        form_filter_aurora = bool(request.json.get('FILTER_AURORA'))
+        aurora_min = normalize_aurora_min(request.json.get('FILTER_AURORA_MIN')) if form_filter_aurora else 0
         form_filter_asi676mc_repaired_requested = bool(request.json.get('FILTER_ASI676MC_REPAIRED'))
         form_filter_asi676mc_excluded_requested = bool(request.json.get('FILTER_ASI676MC_EXCLUDED'))
         form_filter_asi676mc_failed_requested = bool(request.json.get('FILTER_ASI676MC_FAILED'))
@@ -6956,25 +6969,15 @@ class AjaxGalleryViewerView(BaseView):
                 local = False
 
 
-        if form_filter_detections:
-            # filter images that have a detection
-            form_viewer = IndiAllskyGalleryViewer(
-                data=request.json,
-                camera_id=camera_id,
-                detections_count=1,
-                asi676mc_statuses=form_filter_asi676mc_statuses,
-                s3_prefix=self.s3_prefix,
-                local=local,
-            )
-        else:
-            form_viewer = IndiAllskyGalleryViewer(
-                data=request.json,
-                camera_id=camera_id,
-                detections_count=0,
-                asi676mc_statuses=form_filter_asi676mc_statuses,
-                s3_prefix=self.s3_prefix,
-                local=local,
-            )
+        form_viewer = IndiAllskyGalleryViewer(
+            data=request.json,
+            camera_id=camera_id,
+            detections_count=1 if form_filter_detections else 0,
+            aurora_min=aurora_min,
+            asi676mc_statuses=form_filter_asi676mc_statuses,
+            s3_prefix=self.s3_prefix,
+            local=local,
+        )
 
 
         json_data = {}
@@ -9528,6 +9531,29 @@ class FocusView(TemplateView):
         context['form_focuscontroller'] = IndiAllskyFocusControllerForm()
 
         return context
+
+
+class GpsInfoView(TemplateView):
+    page_title = 'GPS Info'
+    decorators = [login_required]
+
+    def get_context(self):
+        context = super(GpsInfoView, self).get_context()
+        context['gps_enable'] = bool(self.indi_allsky_config.get('GPS_ENABLE', False))
+        context['camera_lat'] = round(self.camera.latitude, 6) if self.camera.latitude is not None else '-'
+        context['camera_lon'] = round(self.camera.longitude, 6) if self.camera.longitude is not None else '-'
+        return context
+
+
+class JsonGpsInfoView(JsonView):
+    decorators = [login_required]
+
+    def dispatch_request(self):
+        from ..gpsd_client import query_gpsd
+
+        gpsd_host = self.indi_allsky_config.get('GPSD_HOST', '127.0.0.1')
+        gpsd_port = int(self.indi_allsky_config.get('GPSD_PORT', 2947))
+        return jsonify(query_gpsd(host=gpsd_host, port=gpsd_port))
 
 
 class JsonFocusView(JsonView):
@@ -16581,6 +16607,8 @@ bp_allsky.add_url_rule('/ajax/indiserver', view_func=AjaxIndiServerChangeView.as
 
 bp_allsky.add_url_rule('/focus', view_func=FocusView.as_view('focus_view', template_name='focus.html'))
 bp_allsky.add_url_rule('/js/focus', view_func=JsonFocusView.as_view('js_focus_view'))
+bp_allsky.add_url_rule('/gps', view_func=GpsInfoView.as_view('gps_view', template_name='gps.html'))
+bp_allsky.add_url_rule('/js/gps', view_func=JsonGpsInfoView.as_view('js_gps_view'))
 bp_allsky.add_url_rule('/ajax/focuscontroller', view_func=AjaxFocusControllerView.as_view('focus_controller_view'))
 
 bp_allsky.add_url_rule('/manual_gpio', view_func=ManualGpioView.as_view('manual_gpio_view', template_name='manual_gpio.html'))
