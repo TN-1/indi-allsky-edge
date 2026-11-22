@@ -141,7 +141,7 @@ def write_composition_manifest(
 
     if applied_patches:
         lines.extend([
-            f"\n### Applied Reconciliation Glue Patches ({len(applied_patches)})\n",
+            f"\n### Applied Reconciliation Patches ({len(applied_patches)})\n",
             "| Patch | Description |",
             "|:---|:---|",
         ])
@@ -290,19 +290,19 @@ def main() -> int:
             print(f"Graceful Exclusion: Skipping external branch '{branch_name}'.")
             excluded.append(f"External {branch_name} (Conflict)")
 
-    # 3. Apply Post-Merge Reconciliation Glue Patches
+    # 3. Apply Post-Merge Reconciliation Patches
     patches = manifest.get("reconciliation_patches", [])
     for patch_info in patches:
         patch_file = manifest_file.parent / patch_info["file"]
         desc = patch_info.get("description", patch_file.name)
-        print(f"\n--> Applying glue patch: {desc}")
+        print(f"\n--> Applying patch: {desc}")
         apply_res = run_command(["git", "apply", str(patch_file)], cwd=workspace, check=False)
         if apply_res.returncode == 0:
             run_command(["git", "commit", "-am", f"chore(reconciliation): {desc}"], cwd=workspace)
             integrated.append(f"Patch: {desc}")
             applied_patches.append({"file": patch_info["file"], "desc": desc})
         else:
-            print(f"Warning: Failed to apply glue patch: {patch_file}. Skipping.")
+            print(f"Warning: Failed to apply patch: {patch_file}. Skipping.")
             excluded.append(f"Patch {patch_file.name} (Apply failed)")
 
     # 4. Generate Build Composition Manifest

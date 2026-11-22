@@ -33,7 +33,7 @@ Read this manual before executing any operations, modifying integration manifest
 .
 ├── .github/workflows/
 │   └── build-edge.yml       # GitHub Actions workflow: runs Stage 1 (rebuild.py) and Stage 2 (dpkg-buildpackage)
-├── manifest.yaml            # Declarative list of pull requests, external branches, and glue patches
+├── manifest.yaml            # Declarative list of pull requests, external branches, and patches
 ├── rebuild.py               # Deterministic Python synthesis engine
 ├── rr-cache/                # Tracked Git rerere database (records manual conflict resolutions)
 ├── AGENTS.md                # This operational guide
@@ -61,7 +61,7 @@ When an upstream PR (or new topic branch) is ready to be included in the edge bu
      author: "username"
    ```
    * All merges operate under **Graceful Exclusion**: if a PR merges cleanly, it is integrated into `edge`. If it encounters a merge conflict, it is logged and skipped without halting the build.
-   * If a pull request has a noted conflict in GitHub UI against upstream/main, omit it from `manifest.yaml` until the author resolves it. If it only conflicts upon cumulative integration into `edge`, resolve it via `rr-cache/` or a glue patch.
+   * If a pull request has a noted conflict in GitHub UI against upstream/main, omit it from `manifest.yaml` until the author resolves it. If it only conflicts upon cumulative integration into `edge`, resolve it via `rr-cache/` or a patch.
 3. **Test the Integration Locally**:
    ```bash
    python3 rebuild.py --workspace workspace --no-transform
@@ -142,8 +142,8 @@ The script will halt at the conflicting commit in `./workspace`.
      ```
   5. In all future CI runs, Git will automatically apply this resolution without pausing.
 
-* **Tier 3: Complex Architectural Differences (Glue Patch)**
-  If two PRs require substantial adapter glue code:
+* **Tier 3: Complex Architectural Differences (Patch)**
+  If two PRs require substantial adapter code:
   1. Create a patch file in `patches/` (e.g. `patches/reconcile-feature-x.patch`).
   2. Declare the patch in `manifest.yaml` under `reconciliation_patches`.
   3. `rebuild.py` will apply it via `git apply` immediately after the conflicting PRs merge.

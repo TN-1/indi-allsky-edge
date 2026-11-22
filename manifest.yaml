@@ -3,8 +3,7 @@
 #
 # Declarative manifest defining the topic branches and pull requests to be
 # aggregated onto upstream/main to form the bleeding-edge distribution.
-# All items are attempted sequentially; clean merges are integrated, and
-# any merge conflicts are logged and skipped without breaking the build.
+# Ordered oldest-to-newest so older PRs take precedence under graceful exclusion.
 # ==============================================================================
 
 version: 1
@@ -19,128 +18,159 @@ package:
   priority: "optional"
 
 # ------------------------------------------------------------------------------
-# Pull Requests (Integrated in sequential order)
+# Pull Requests (Integrated oldest-to-newest)
 # ------------------------------------------------------------------------------
 pull_requests:
-  # --- Core Stability & Security ---
-  - id: 3342
-    title: "Add an Astrophotography Companion to the live view"
-    author: "Rob0xFF"
+  - id: 3009
+    title: "fix: don't crash charts endpoint when detection mask size doesn't match image"
+    author: "DeepakJaggupalli"
 
-  - id: 3338
-    title: "feat: implement OIDC back-channel logout and fix premature session termination"
+  - id: 3049
+    title: "Feature: Adds script to generate screenshots"
     author: "TN-1"
 
-  - id: 3321
-    title: "fix(sensors): handle TSL2561 and TSL2591 out-of-range readings"
-    author: "TN-1"
-
-  - id: 3317
-    title: "fix: prevent SensorWorker crash on missing Ecowitt outdoor data"
-    author: "TN-1"
-
-  - id: 3316
-    title: "fix: respect configured image file type in allsky-map ping"
-    author: "TN-1"
-
-  - id: 3305
-    title: "Fix: Logging in darks.py"
-    author: "TN-1"
-
-  - id: 3302
-    title: "fix(mdns): Harden mDNS hostname's and certificate SAN's"
-    author: "TN-1"
-
-  # --- UI, Sensor & Visualization Enhancements ---
-  - id: 3298
-    title: "Fix: chart resizing at fractional browser zoom"
+  - id: 3112
+    title: "Feature: Dark library builder and dark management in the UI"
     author: "321MathiasS123"
 
-  - id: 3292
-    title: "Bilateral controls and help text stay hidden until Bilateral is selected"
-    author: "ikeysolomon"
+  - id: 3134
+    title: "Feature: Docker Stack Rewrite"
+    author: "TN-1"
 
-  - id: 3290
-    title: "WH-SP-RG - Tipping bucket rain gauge"
-    author: "ikeysolomon"
+  - id: 3201
+    title: "Support automatic VirtualSky mirroring"
+    author: "321MathiasS123"
 
-  - id: 3272
-    title: "Send *_complete events once the file is written"
-    author: "chrisramsay"
+  - id: 3225
+    title: "Feature: Gallery panorama overlay"
+    author: "321MathiasS123"
 
-  - id: 3257
-    title: "Feature: Chart tab enhancement, adds overlaid configurable charts"
+  - id: 3231
+    title: "Feature: Add Model Context Protocol (MCP) server for AI agent integration"
+    author: "TN-1"
+
+  - id: 3243
+    title: "WH-SP-WS01 - Cup anemometer wind speed sensor"
     author: "ikeysolomon"
 
   - id: 3251
     title: "FC-37 inverse control and help text stay hidden until FC-37 is selected"
     author: "ikeysolomon"
 
-  - id: 3225
-    title: "Feature: Gallery panorama overlay"
+  - id: 3257
+    title: "Feature: Chart tab enhancement, adds overlaid configurable charts"
+    author: "ikeysolomon"
+
+  - id: 3265
+    title: "Support sensor devices A-Z with a progressive Add sensor UI"
+    author: "ikeysolomon"
+
+  - id: 3267
+    title: "Feature: add incremental Archive sync with availability scheduling to SyncAPI"
     author: "321MathiasS123"
 
-  - id: 3201
-    title: "Support automatic VirtualSky mirroring"
-    author: "321MathiasS123"
+  - id: 3272
+    title: "Send *_complete events once the file is written"
+    author: "chrisramsay"
 
-  - id: 3009
-    title: "fix: don't crash charts endpoint when detection mask size doesn't match image"
-    author: "DeepakJaggupalli"
-
-  # --- Infrastructure, Automation & Features ---
-  - id: 3323
-    title: "testing: harden qa script: verify authenticated web route rendering and live WSGI socket binding"
-    author: "TN-1"
-
-  - id: 3318
-    title: "refactor: streamline stylesheet architecture"
-    author: "TN-1"
-
-  - id: 3289
-    title: "feat(github): add structured issue forms"
+  - id: 3280
+    title: "Add setting to disable smoke data checking and reporting"
     author: "TN-1"
 
   - id: 3283
     title: "Add allsky-map.com integration section and screenshot to README"
     author: "TN-1"
 
-  - id: 3280
-    title: "Add setting to disable smoke data checking and reporting"
+  - id: 3289
+    title: "feat(github): add structured issue forms"
     author: "TN-1"
 
-  - id: 3231
-    title: "Feature: Add Model Context Protocol (MCP) server for AI agent integration"
+  - id: 3290
+    title: "WH-SP-RG - Tipping bucket rain gauge"
+    author: "ikeysolomon"
+
+  - id: 3292
+    title: "Bilateral controls and help text stay hidden until Bilateral is selected"
+    author: "ikeysolomon"
+
+  - id: 3298
+    title: "Fix: chart resizing at fractional browser zoom"
+    author: "321MathiasS123"
+
+  - id: 3302
+    title: "fix(mdns): Harden mDNS hostname's and certificate SAN's"
     author: "TN-1"
 
-  - id: 3134
-    title: "Feature: Docker Stack Rewrite"
+  - id: 3305
+    title: "Fix: Logging in darks.py"
     author: "TN-1"
 
-  - id: 3049
-    title: "Feature: Adds script to generate screenshots"
+  - id: 3316
+    title: "fix: respect configured image file type in allsky-map ping"
     author: "TN-1"
 
-  # --- Dependency Updates ---
-  - id: 3337
-    title: "refactor(requirements): modernize dependency manifests and isolate legacy targets"
+  - id: 3317
+    title: "fix: prevent SensorWorker crash on missing Ecowitt outdoor data"
+    author: "TN-1"
+
+  - id: 3318
+    title: "refactor: streamline stylesheet architecture"
+    author: "TN-1"
+
+  - id: 3320
+    title: "feat(config): simple and expert settings mode with live search"
+    author: "TN-1"
+
+  - id: 3321
+    title: "fix(sensors): handle TSL2561 and TSL2591 out-of-range readings"
+    author: "TN-1"
+
+  - id: 3323
+    title: "testing: harden qa script: verify authenticated web route rendering and live WSGI socket binding"
     author: "TN-1"
 
   - id: 3332
     title: "Bump the npm-dependencies group with 2 updates"
     author: "dependabot[bot]"
 
-  # --- Large Subsystem Enhancements (Reconciled on Edge) ---
-  - id: 3265
-    title: "Support sensor devices A-Z with a progressive Add sensor UI"
-    author: "ikeysolomon"
+  - id: 3337
+    title: "refactor(requirements): modernize dependency manifests and isolate legacy targets"
+    author: "TN-1"
 
-  - id: 3112
-    title: "Feature: Dark library builder and dark management in the UI"
-    author: "321MathiasS123"
+  - id: 3338
+    title: "feat: implement OIDC back-channel logout and fix premature session termination"
+    author: "TN-1"
 
-  - id: 3320
-    title: "feat(config): simple and expert settings mode with live search"
+  - id: 3340
+    title: "Document h264_v4l2m2m firmware stalls, dropped frames and width corruption; add width-safe scaling options"
+    author: "ennui2342"
+
+  - id: 3342
+    title: "Add an Astrophotography Companion to the live view"
+    author: "Rob0xFF"
+
+  - id: 3343
+    title: "Recover automatically from capture, Wi-Fi, sensor and web service failures"
+    author: "Rob0xFF"
+
+  - id: 3345
+    title: "Align portable all-sky cameras and their sky products from the stars"
+    author: "Rob0xFF"
+
+  - id: 3346
+    title: "Keep TSL2591 light readings usable through twilight"
+    author: "Rob0xFF"
+
+  - id: 3349
+    title: "SyncAPI: don't fail uploads when two requests create the same folder"
+    author: "ennui2342"
+
+  - id: 3351
+    title: "Allsky Map - add \"Share Images for Research\" opt-out setting"
+    author: "jerryfmedeiros"
+
+  - id: 3354
+    title: "Fix SyncAPI setup documentation and prioritize web-only prompt in .deb installer"
     author: "TN-1"
 
 # ------------------------------------------------------------------------------
@@ -149,8 +179,11 @@ pull_requests:
 external_refs: []
 
 # ------------------------------------------------------------------------------
-# Reconciliation Glue Patches (Applied if specific PR combinations conflict)
+# Reconciliation Patches (Applied if specific PR combinations conflict)
 # ------------------------------------------------------------------------------
 reconciliation_patches:
   - file: "patches/01-edge-packaging.patch"
     description: "Configure indi-allsky-edge package identity and packaging workflow"
+
+  - file: "patches/02-reconcile-3345-3201.patch"
+    description: "Reconcile VirtualSky flip_h/flip_v mirroring (#3201) with fisheye projection (#3345)"

@@ -1004,6 +1004,7 @@ def IMAGE_LABEL_TEMPLATE_validator(form, field):
         'dew_heater_status' : '',
         'fan_status' : '',
         'wind_dir' : '',
+        'wind_speed' : 0.0,
         'rain_status' : '',
         'rain_rate' : 0.0,
         'rain_24h' : 0.0,
@@ -3392,7 +3393,7 @@ def I2C_ADDRESS_validator(form, field):
 
 def TEMP_SENSOR_I2C_ADDRESS_validator(form, field):
     classname_field = getattr(form, field.name.replace('_I2C_ADDRESS', '_CLASSNAME'))
-    if classname_field.data in ('blinka_rain_sensor_fc37', 'blinka_rain_sensor_wh_sp_rg'):
+    if classname_field.data in ('blinka_rain_sensor_fc37', 'blinka_rain_sensor_wh_sp_rg', 'blinka_wind_speed_sensor_wh_sp_ws01'):
         return
     if not field.data or not field.data.strip():
         raise ValidationError('I2C address is required')
@@ -3982,6 +3983,11 @@ class IndiAllskyConfigForm(FlaskForm):
             ('-2:720', 'Height 720px - [-2:720] - 1GB RAM'),
             ('-2:480', 'Height 480px - [-2:480] - <1GB RAM'),
         ),
+        'Raspberry Pi h264 (v4l2m2m)' : (
+            ('1280:-2', 'Width 1280px - [1280:-2] - v4l2m2m safe'),
+            ('1024:-2', 'Width 1024px - [1024:-2] - v4l2m2m safe'),
+            ('640:-2', 'Width 640px - [640:-2] - v4l2m2m safe'),
+        ),
         'Legacy' : (
             ('-1:2304', 'Height 2304px - [-1:2304] - 75% (imx477-only)'),
             ('-1:1520', 'Height 1520px - [-1:1520] - 50% (imx477-only)'),
@@ -4289,6 +4295,9 @@ class IndiAllskyConfigForm(FlaskForm):
         'Rain Sensors' : (
             ('blinka_rain_sensor_fc37', 'FC-37 Rain Sensor - digital (1 slot)'),
             ('blinka_rain_sensor_wh_sp_rg', 'MISOL WH-SP-RG Tipping Bucket - pulse output (2 slots)'),
+        ),
+        'Wind Sensors' : (
+            ('blinka_wind_speed_sensor_wh_sp_ws01', 'WH-SP-WS01 Cup Anemometer - pulse output (1 slot)'),
         ),
         'Remote' : (
             ('mqtt_broker_sensor', 'MQTT Broker Sensor - (10 slots)'),
@@ -4956,6 +4965,7 @@ class IndiAllskyConfigForm(FlaskForm):
     TEXT_PROPERTIES__PIL_FONT_CUSTOM = StringField('Custom Font', validators=[TEXT_PROPERTIES__PIL_FONT_CUSTOM_validator])
     TEXT_PROPERTIES__PIL_FONT_SIZE   = IntegerField('Default Font Size', validators=[DataRequired(), TEXT_PROPERTIES__PIL_FONT_SIZE_validator])
     CARDINAL_DIRS__ENABLE            = BooleanField('Enable Cardinal Directions')
+    CARDINAL_DIRS__AUTO_ALIGN        = BooleanField('Align automatically from stars')
     CARDINAL_DIRS__FONT_COLOR        = StringField('Text Color (r,g,b)', validators=[DataRequired(), RGB_COLOR_validator])
     CARDINAL_DIRS__SWAP_NS           = BooleanField('Swap North/South')
     CARDINAL_DIRS__SWAP_EW           = BooleanField('Swap East/West')
@@ -5077,6 +5087,7 @@ class IndiAllskyConfigForm(FlaskForm):
     MQTTPUBLISH__CERT_BYPASS         = BooleanField('Disable Certificate Validation')
     MQTTPUBLISH__PUBLISH_IMAGE       = BooleanField('Enable Image Publishing')
     SYNCAPI__ENABLE                  = BooleanField('Enable Sync API')
+    SYNCAPI__MODE                    = SelectField('Synchronization mode', choices=[('automatic', 'Live sync'), ('archive', 'Archive sync')], default='automatic')
     SYNCAPI__BASEURL                 = StringField('URL', validators=[SYNCAPI__BASEURL_validator], render_kw={'autocomplete' : 'new-password'})  # prevent saving BASEURL as username
     SYNCAPI__USERNAME                = StringField('Username', validators=[SYNCAPI__USERNAME_validator], render_kw={'autocomplete' : 'new-password'})
     SYNCAPI__APIKEY                  = PasswordField('API Key', widget=PasswordInput(hide_value=False), validators=[SYNCAPI__APIKEY_validator], render_kw={'autocomplete' : 'new-password'})
@@ -5097,6 +5108,7 @@ class IndiAllskyConfigForm(FlaskForm):
     ALLSKYMAP__MAP_LATITUDE          = StringField('Map Latitude', validators=[ALLSKYMAP__MAP_LATITUDE_validator])
     ALLSKYMAP__MAP_LONGITUDE         = StringField('Map Longitude', validators=[ALLSKYMAP__MAP_LONGITUDE_validator])
     ALLSKYMAP__UPLOAD_IMAGE          = BooleanField('Upload Latest Image')
+    ALLSKYMAP__ALLOW_RESEARCH        = BooleanField('Share Images for Research')
     ALLSKYMAP__INTERVAL              = IntegerField('Interval (Minutes)', validators=[ALLSKYMAP__INTERVAL_validator])
     YOUTUBE__ENABLE                  = BooleanField('Enable')
     YOUTUBE__SECRETS_FILE            = StringField('Client Secrets File', validators=[YOUTUBE__SECRETS_FILE_validator])
@@ -5174,8 +5186,8 @@ class IndiAllskyConfigForm(FlaskForm):
     VIRTUALSKY__LONGITUDE_OFFSET        = FloatField('VirtualSky Longitude Offset', validators=[VIRTUALSKY__LONGITUDE_OFFSET_validator], widget=NumberInput(step=0.25))
     VIRTUALSKY__OFFSET_X                = IntegerField('X Offset', validators=[VIRTUALSKY__OFFSET_X_validator])
     VIRTUALSKY__OFFSET_Y                = IntegerField('Y Offset', validators=[VIRTUALSKY__OFFSET_Y_validator])
-    VIRTUALSKY__FLIP_H                 = BooleanField('Flip Overlay Horizontally')
-    VIRTUALSKY__FLIP_V                 = BooleanField('Flip Overlay Vertically')
+    #VIRTUALSKY__FLIP_NS                 = BooleanField('Flip North/South')
+    #VIRTUALSKY__FLIP_EW                 = BooleanField('Flip East/West')
     CIRCULAR_DISPLAY__ENABLE         = BooleanField('Enable Circular Display Output')
     CIRCULAR_DISPLAY__RESOLUTION     = SelectField('Resolution', choices=CIRCULAR_DISPLAY__RESOLUTION_choices, validators=[DataRequired(), CIRCULAR_DISPLAY__RESOLUTION_validator])
     CIRCULAR_DISPLAY__IMAGE_CIRCLE_DIAMETER  = IntegerField('Image Circle', validators=[CIRCULAR_DISPLAY__IMAGE_CIRCLE_DIAMETER_validator])
@@ -6573,6 +6585,7 @@ class IndiAllskyImageViewer(FlaskForm):
         self.s3_prefix = kwargs.get('s3_prefix', '')
         self.camera_id = kwargs.get('camera_id')
         self.local = kwargs.get('local')
+        self.smoke_enable = kwargs.get('smoke_enable', True)
         self.asi676mc_diagnostic_download_enabled = kwargs.get(
             'asi676mc_diagnostic_download_enabled',
             False,
@@ -7243,6 +7256,7 @@ class IndiAllskyGalleryViewer(FlaskForm):
         self.s3_prefix = kwargs.get('s3_prefix', '')
         self.camera_id = kwargs.get('camera_id')
         self.local = kwargs.get('local')
+        self.smoke_enable = kwargs.get('smoke_enable', True)
         requested_statuses = kwargs.get('asi676mc_statuses', ())
         self.asi676mc_statuses = tuple(
             status
@@ -7603,6 +7617,7 @@ class IndiAllskyVideoViewer(FlaskForm):
         self.s3_prefix = kwargs.get('s3_prefix', '')
         self.camera_id = kwargs.get('camera_id')
         self.local = kwargs.get('local')
+        self.smoke_enable = kwargs.get('smoke_enable', True)
 
 
     def getYears(self):
@@ -7763,7 +7778,7 @@ class IndiAllskyVideoViewer(FlaskForm):
                 'dayDate_long'      : v.dayDate.strftime('%B %d, %Y'),
                 'dayDate'           : v.dayDate.strftime('%Y%m%d'),
                 'night'             : v.night,
-                'max_smoke_rating'  : constants.SMOKE_RATING_MAP_STR[data.get('max_smoke_rating', constants.SMOKE_RATING_NODATA)],
+                'max_smoke_rating'  : constants.SMOKE_RATING_MAP_STR.get(data.get('max_smoke_rating'), '') if self.smoke_enable and data.get('max_smoke_rating', constants.SMOKE_RATING_NODATA) != constants.SMOKE_RATING_NODATA else '',
                 'max_kpindex'       : data.get('max_kpindex', 0.0),
                 'max_ovation_max'   : data.get('max_ovation_max', 0),
                 'max_moonphase'     : data.get('max_moonphase', 0),  # might be null
@@ -8064,6 +8079,7 @@ class IndiAllskyMiniVideoViewer(FlaskForm):
         self.s3_prefix = kwargs.get('s3_prefix', '')
         self.camera_id = kwargs.get('camera_id')
         self.local = kwargs.get('local')
+        self.smoke_enable = kwargs.get('smoke_enable', True)
 
 
     def getYears(self):
@@ -8237,7 +8253,7 @@ class IndiAllskyMiniVideoViewer(FlaskForm):
                 'dayDate'           : v.dayDate.strftime('%Y%m%d'),
                 'night'             : v.night,
                 'note'              : v.note,
-                'max_smoke_rating'  : constants.SMOKE_RATING_MAP_STR[data.get('max_smoke_rating', constants.SMOKE_RATING_NODATA)],
+                'max_smoke_rating'  : constants.SMOKE_RATING_MAP_STR.get(data.get('max_smoke_rating'), '') if self.smoke_enable and data.get('max_smoke_rating', constants.SMOKE_RATING_NODATA) != constants.SMOKE_RATING_NODATA else '',
                 'max_kpindex'       : data.get('max_kpindex', 0.0),
                 'max_ovation_max'   : data.get('max_ovation_max', 0),
                 'max_moonphase'     : data.get('max_moonphase', 0),  # might be null
@@ -10088,8 +10104,8 @@ class IndiAllskyVirtualSkyHelperForm(FlaskForm):
     SHOWSTARLABELS          = BooleanField('Star Labels')
     SHOWPLANETS             = BooleanField('Show Planets')
     SHOWPLANETLABELS        = BooleanField('Planet Labels')
-    FLIP_H                  = BooleanField('Flip Overlay Horizontally')
-    FLIP_V                  = BooleanField('Flip Overlay Vertically')
+    #FLIP_NS                 = BooleanField('Flip North/South')
+    #FLIP_EW                 = BooleanField('Flip East/West')
 
 
 class IndiAllskyCameraSimulatorForm(FlaskForm):

@@ -1004,6 +1004,7 @@ def IMAGE_LABEL_TEMPLATE_validator(form, field):
         'dew_heater_status' : '',
         'fan_status' : '',
         'wind_dir' : '',
+        'wind_speed' : 0.0,
         'rain_status' : '',
         'rain_rate' : 0.0,
         'rain_24h' : 0.0,
@@ -3390,12 +3391,20 @@ def I2C_ADDRESS_validator(form, field):
         raise ValidationError('I2C address must be 0x7f or less')
 
 
-def TEMP_SENSOR_I2C_ADDRESS_validator(form, field):
-    classname_field = getattr(form, field.name.replace('_I2C_ADDRESS', '_CLASSNAME'))
-    if classname_field.data in ('blinka_rain_sensor_fc37', 'blinka_rain_sensor_wh_sp_rg'):
+def TEMP_SENSOR__I2C_ADDRESS_validator(form, field):
+    sensor_class_field_name = field.name.replace('_I2C_ADDRESS', '_CLASSNAME')
+    sensor_class = getattr(form, sensor_class_field_name).data
+
+    if sensor_class in (
+        'blinka_wind_speed_sensor_wh_sp_ws01',
+        'blinka_rain_sensor_fc37',
+        'blinka_rain_sensor_wh_sp_rg',
+    ):
         return
-    if not field.data or not field.data.strip():
-        raise ValidationError('I2C address is required')
+
+    if not field.data:
+        raise ValidationError('This field is required.')
+
     I2C_ADDRESS_validator(form, field)
 
 
@@ -4289,6 +4298,9 @@ class IndiAllskyConfigForm(FlaskForm):
             ('blinka_rain_sensor_fc37', 'FC-37 Rain Sensor - digital (1 slot)'),
             ('blinka_rain_sensor_wh_sp_rg', 'MISOL WH-SP-RG Tipping Bucket - pulse output (2 slots)'),
         ),
+        'Wind Sensors' : (
+            ('blinka_wind_speed_sensor_wh_sp_ws01', 'WH-SP-WS01 Cup Anemometer - pulse output (1 slot)'),
+        ),
         'Remote' : (
             ('mqtt_broker_sensor', 'MQTT Broker Sensor - (10 slots)'),
         ),
@@ -5076,6 +5088,7 @@ class IndiAllskyConfigForm(FlaskForm):
     MQTTPUBLISH__CERT_BYPASS         = BooleanField('Disable Certificate Validation')
     MQTTPUBLISH__PUBLISH_IMAGE       = BooleanField('Enable Image Publishing')
     SYNCAPI__ENABLE                  = BooleanField('Enable Sync API')
+    SYNCAPI__MODE                    = SelectField('Synchronization mode', choices=[('automatic', 'Live sync'), ('archive', 'Archive sync')], default='automatic')
     SYNCAPI__BASEURL                 = StringField('URL', validators=[SYNCAPI__BASEURL_validator], render_kw={'autocomplete' : 'new-password'})  # prevent saving BASEURL as username
     SYNCAPI__USERNAME                = StringField('Username', validators=[SYNCAPI__USERNAME_validator], render_kw={'autocomplete' : 'new-password'})
     SYNCAPI__APIKEY                  = PasswordField('API Key', widget=PasswordInput(hide_value=False), validators=[SYNCAPI__APIKEY_validator], render_kw={'autocomplete' : 'new-password'})
@@ -5242,7 +5255,7 @@ class IndiAllskyConfigForm(FlaskForm):
         locals()['TEMP_SENSOR__' + letter + '_PIN_1'] = StringField('Pin/Port 1', validators=[DEVICE_PIN_NAME_validator])
         locals()['TEMP_SENSOR__' + letter + '_PIN_2'] = StringField('Pin/Port 2', validators=[DEVICE_PIN_NAME_validator])
         locals()['TEMP_SENSOR__' + letter + '_USER_VAR_SLOT'] = SelectField('Sensor ' + letter + ' Initial Slot', choices=SENSOR_USER_VAR_SLOT_choices, validators=[SENSOR_USER_VAR_SLOT_validator])
-        locals()['TEMP_SENSOR__' + letter + '_I2C_ADDRESS'] = StringField('I2C Address', validators=[TEMP_SENSOR_I2C_ADDRESS_validator])
+        locals()['TEMP_SENSOR__' + letter + '_I2C_ADDRESS'] = StringField('I2C Address', validators=[TEMP_SENSOR__I2C_ADDRESS_validator])
         locals()['TEMP_SENSOR__' + letter + '_TITLE_TEMPLATE'] = StringField('Chart Title Template', validators=[DataRequired(), TEMP_SENSOR__TITLE_TEMPLATE_validator])
     del letter
     TEMP_SENSOR__FC37_ACTIVE_LOW     = BooleanField('Rain Sensor FC-37 - Invert logic')
@@ -6546,6 +6559,7 @@ class IndiAllskyImageViewer(FlaskForm):
         self.s3_prefix = kwargs.get('s3_prefix', '')
         self.camera_id = kwargs.get('camera_id')
         self.local = kwargs.get('local')
+        self.smoke_enable = kwargs.get('smoke_enable', True)
         self.asi676mc_diagnostic_download_enabled = kwargs.get(
             'asi676mc_diagnostic_download_enabled',
             False,
@@ -7216,6 +7230,7 @@ class IndiAllskyGalleryViewer(FlaskForm):
         self.s3_prefix = kwargs.get('s3_prefix', '')
         self.camera_id = kwargs.get('camera_id')
         self.local = kwargs.get('local')
+        self.smoke_enable = kwargs.get('smoke_enable', True)
         requested_statuses = kwargs.get('asi676mc_statuses', ())
         self.asi676mc_statuses = tuple(
             status
@@ -7576,6 +7591,7 @@ class IndiAllskyVideoViewer(FlaskForm):
         self.s3_prefix = kwargs.get('s3_prefix', '')
         self.camera_id = kwargs.get('camera_id')
         self.local = kwargs.get('local')
+        self.smoke_enable = kwargs.get('smoke_enable', True)
 
 
     def getYears(self):
@@ -7736,7 +7752,7 @@ class IndiAllskyVideoViewer(FlaskForm):
                 'dayDate_long'      : v.dayDate.strftime('%B %d, %Y'),
                 'dayDate'           : v.dayDate.strftime('%Y%m%d'),
                 'night'             : v.night,
-                'max_smoke_rating'  : constants.SMOKE_RATING_MAP_STR[data.get('max_smoke_rating', constants.SMOKE_RATING_NODATA)],
+                'max_smoke_rating'  : constants.SMOKE_RATING_MAP_STR.get(data.get('max_smoke_rating'), '') if self.smoke_enable and data.get('max_smoke_rating', constants.SMOKE_RATING_NODATA) != constants.SMOKE_RATING_NODATA else '',
                 'max_kpindex'       : data.get('max_kpindex', 0.0),
                 'max_ovation_max'   : data.get('max_ovation_max', 0),
                 'max_moonphase'     : data.get('max_moonphase', 0),  # might be null
@@ -8037,6 +8053,7 @@ class IndiAllskyMiniVideoViewer(FlaskForm):
         self.s3_prefix = kwargs.get('s3_prefix', '')
         self.camera_id = kwargs.get('camera_id')
         self.local = kwargs.get('local')
+        self.smoke_enable = kwargs.get('smoke_enable', True)
 
 
     def getYears(self):
@@ -8210,7 +8227,7 @@ class IndiAllskyMiniVideoViewer(FlaskForm):
                 'dayDate'           : v.dayDate.strftime('%Y%m%d'),
                 'night'             : v.night,
                 'note'              : v.note,
-                'max_smoke_rating'  : constants.SMOKE_RATING_MAP_STR[data.get('max_smoke_rating', constants.SMOKE_RATING_NODATA)],
+                'max_smoke_rating'  : constants.SMOKE_RATING_MAP_STR.get(data.get('max_smoke_rating'), '') if self.smoke_enable and data.get('max_smoke_rating', constants.SMOKE_RATING_NODATA) != constants.SMOKE_RATING_NODATA else '',
                 'max_kpindex'       : data.get('max_kpindex', 0.0),
                 'max_ovation_max'   : data.get('max_ovation_max', 0),
                 'max_moonphase'     : data.get('max_moonphase', 0),  # might be null
