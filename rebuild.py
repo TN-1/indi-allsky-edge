@@ -208,6 +208,12 @@ def main() -> int:
         pr_id = pr["id"]
         title = pr.get("title", f"PR #{pr_id}")
 
+        if pr.get("excluded"):
+            reason = pr.get("reason", "Explicitly excluded in manifest")
+            print(f"\n--> Excluding PR #{pr_id}: {title} ({reason})")
+            excluded.append(f"PR #{pr_id}: {title} ({reason})")
+            continue
+
         print(f"\n--> Evaluating PR #{pr_id}: {title}")
         fetch_res = run_command(
             ["git", "fetch", "upstream", f"pull/{pr_id}/head:pr-{pr_id}"],
@@ -247,6 +253,9 @@ def main() -> int:
                 if line.startswith("UD ") or line.startswith("DU "):
                     deleted_file = line[3:].strip()
                     run_command(["git", "rm", deleted_file], cwd=workspace, check=False)
+                elif line.startswith("AU "):
+                    added_file = line[3:].strip()
+                    run_command(["git", "add", added_file], cwd=workspace, check=False)
 
             status_res = run_command(["git", "status", "--porcelain"], cwd=workspace, check=False)
             unmerged = [

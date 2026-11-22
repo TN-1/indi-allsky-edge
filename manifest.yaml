@@ -133,6 +133,12 @@ pull_requests:
     title: "Bump the npm-dependencies group with 2 updates"
     author: "dependabot[bot]"
 
+  - id: 3333
+    title: "Bump the python-dependencies group in /requirements with 36 updates"
+    author: "dependabot[bot]"
+    excluded: true
+    reason: "Redundant due to PR #3337"
+
   - id: 3337
     title: "refactor(requirements): modernize dependency manifests and isolate legacy targets"
     author: "TN-1"
@@ -176,6 +182,14 @@ pull_requests:
   - id: 3355
     title: "Add WeatherFlow Tempest REST API and local UDP sensor support"
     author: "TN-1"
+
+  - id: 3116
+    title: "Feature: Test Suite"
+    author: "TN-1"
+
+  - id: 3109
+    title: "MLX sky temp sensor expanded functions- cloudiness index"
+    author: "ikeysolomon"
 
 # ------------------------------------------------------------------------------
 # External Branches (Branches not yet submitted or pending upstream PR)
