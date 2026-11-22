@@ -173,6 +173,10 @@ pull_requests:
     title: "Fix SyncAPI setup documentation and prioritize web-only prompt in .deb installer"
     author: "TN-1"
 
+  - id: 3355
+    title: "Add WeatherFlow Tempest REST API and local UDP sensor support"
+    author: "TN-1"
+
 # ------------------------------------------------------------------------------
 # External Branches (Branches not yet submitted or pending upstream PR)
 # ------------------------------------------------------------------------------
