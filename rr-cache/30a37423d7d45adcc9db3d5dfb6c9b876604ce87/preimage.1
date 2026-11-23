@@ -1,0 +1,1249 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ website_title }}: {{ page_title }}{% endblock %}
+
+{% block head %}
+<meta charset="UTF-8">
+<script src="{{ url_for('indi_allsky.static', filename='virtualsky/stuquery.min.js') }}"></script>
+<script src="{{ url_for('indi_allsky.static', filename='virtualsky/virtualsky.min.js', v=virtualsky_scripts['virtualsky/virtualsky.min.js']) }}" type="text/javascript"></script>
+<script src="{{ url_for('indi_allsky.static', filename='js/virtualsky-calibration.js', v=virtualsky_scripts['js/virtualsky-calibration.js']) }}"></script>
+
+<style>
+/* Size groups by available space, including when the navigation sidebar is open. */
+#virtualsky-page { min-width: 0; padding: clamp(.5rem, 1.5vw, 1rem); }
+#virtualsky-settings .virtualsky-settings-body { padding: 0 1rem 1rem; }
+#form_virtualsky { container-type: inline-size; }
+.virtualsky-groups { display: flex; flex-wrap: wrap; gap: .75rem; }
+.virtualsky-groups > .virtualsky-group { flex: 1 1 27rem; }
+.virtualsky-group {
+    min-width: 0;
+    padding: .625rem .75rem .75rem;
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-box);
+}
+.virtualsky-group legend { padding: 0 .25rem; font-size: .8125rem; font-weight: 600; }
+.virtualsky-fields {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .5rem;
+}
+.virtualsky-field { min-width: 0; display: flex; flex-direction: column; }
+.virtualsky-field > label { display: block; margin-bottom: .25rem; font-size: .75rem; }
+/* Reserve two label lines across neighboring groups, not just within each group. */
+.virtualsky-fields .virtualsky-field > label { min-height: 3em; line-height: 1.5; }
+.virtualsky-field input { width: 100%; min-width: 0; height: 2.25rem; padding-inline: .5rem; margin-top: auto; }
+.virtualsky-group > p { margin-top: .5rem; font-size: .75rem; opacity: .7; }
+.virtualsky-display {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: .75rem;
+    align-items: stretch;
+}
+.virtualsky-layer { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; }
+.virtualsky-display > * {
+    padding: .5rem .625rem;
+    border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-box);
+}
+.virtualsky-display > .virtualsky-layer { display: grid; align-content: center; }
+.virtualsky-layer label { display: flex; align-items: center; gap: .5rem; font-size: .75rem; cursor: pointer; }
+#virtualsky-hint { display: flex; align-items: flex-start; padding: .625rem .75rem; gap: .5rem; }
+#virtualsky-hint i { flex-shrink: 0; margin-top: .125rem; }
+#lens_solver_message { flex-basis: 100%; overflow-wrap: anywhere; }
+#lens_solver_message:empty { display: none; }
+#latest-image { max-width: 100%; }
+.virtualsky-downloads > button { height: auto; min-height: 2.5rem; white-space: normal; }
+@container (max-width: 27rem) {
+    .virtualsky-fields { grid-template-columns: minmax(0, 1fr); }
+    .virtualsky-fields .virtualsky-field { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; gap: .75rem; }
+    .virtualsky-fields .virtualsky-field > label { min-height: 0; margin: 0; }
+    .virtualsky-fields input { margin-top: 0; }
+}
+@container (min-width: 32rem) {
+    .virtualsky-display { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (min-width: 64rem) {
+    .virtualsky-display { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 30rem) {
+    #virtualsky-settings .virtualsky-settings-body { padding-inline: .75rem; }
+    .virtualsky-downloads > button { width: 100%; }
+}
+</style>
+
+<script type="text/javascript">
+var img;
+var json_data = {
+    'image_list' : [],
+    'message' : '',
+};
+var max_age = 900;
+var camera_id = {{ camera_id }};
+var refreshInterval = {{ refreshInterval | int }};
+var timestamp = {{ timestamp | int }};  // does not really do anything yet
+var fullscreen = false;  // initial state
+
+var camera_latitude = {{ camera_latitude }};
+var camera_longitude = {{ camera_longitude }};
+var camera_altitude = {{ camera_altitude }};
+var precession = {{ precession | default(false) | tojson }};
+var time_offset = {{ time_offset }};
+
+var planetarium;
+var redraw_planetarium = false;
+var last_image_timestamp = 0;
+var lensCalibration = {{ lens_calibration | default(none) | tojson }};
+var calibrationMessage = '';
+var calibrationCameraUuid = {{ calibration_camera_uuid | default('') | tojson }};
+var overlayImageMask = {{ overlay_image_mask | default(none) | tojson }};
+
+
+function init() {
+    console.log("Camera Latitude: " + camera_latitude);
+    console.log("Camera Longitude: " + camera_longitude);
+    //console.log("Camera Image Circle: " + camera_lensimagecircle);
+    //console.log("Lens Offset X: " + camera_lens_offset_x);
+    //console.log("Lens Offset Y: " + camera_lens_offset_y);
+
+
+    // Azimuth manipulations
+    //console.log("Camera Azimuth: " + camera_az);
+    //console.log("Camera Altitude: " + camera_alt);
+
+
+    // Calculate latitude and longitude offset
+    /*
+    if (camera_az < 90) {
+        az_90 = camera_az % 90
+    } else if (camera_az >= 90 && camera_az < 180) {
+        az_90 = 90 - (camera_az % 90)
+    } else if (camera_az >= 180 && camera_az < 270) {
+        az_90 = camera_az % 90
+    } else {
+        az_90 = 90 - (camera_az % 90)
+    }
+
+
+    var a_adj = 100;  // fake adjacent leg of triangle, can be any value
+
+    var a_opp = Math.tan(((90 - camera_alt) * Math.PI) / 180) * a_adj;
+
+    var b_hyp_2 = a_opp;
+    var lat_adj = Math.cos((az_90 * Math.PI) / 180) * b_hyp_2;
+
+    var z_opp = lat_adj;
+    var lat_deg_offset = Math.atan(z_opp / a_adj) * (180 / Math.PI);
+    if (camera_az < 90 || camera_az > 270) {
+        // relatively sure this is correct
+        lat_deg_offset *= -1;
+    }
+
+
+    var long_adj = Math.cos(((90 - az_90) * Math.PI) / 180) * b_hyp_2;
+    var z2_opp = long_adj;
+    long_deg_offset = Math.atan(z2_opp / a_adj) * (180 / Math.PI);
+    if (camera_az < 180) {
+        // unsure which direction should add/subract
+        // this may be backwards
+        long_deg_offset *= -1;
+    }
+
+
+    console.log("Latitude Offset: " + lat_deg_offset);
+    console.log("Longitude Offset: " + long_deg_offset);
+
+
+    // Set form values
+    $("#LATITUDE_OFFSET").val(lat_deg_offset.toFixed(2));
+    $("#LONGITUDE_OFFSET").val(long_deg_offset.toFixed(2));
+    */
+
+
+    loadNextImage();
+    loop();
+}
+
+async function loop() {
+    //console.log('Starting loop');
+    while(json_data['image_list'].length == 0) {
+        await sleep(100);
+    }
+
+    img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = function() {
+        // A slow previous request must not replace the current frame.
+        if (this !== img) return;
+        var image_width = this.naturalWidth;
+        var image_height = this.naturalHeight;
+        var image_timestamp = this.entry.timestamp;
+        $('#latest-image').attr({
+            'src': this.src,
+            'width': image_width,
+            'height': image_height,
+        });
+
+
+        // The photo is ready even if layout or overlay drawing is not. Solve
+        // must use this frame, independently of the planetarium's first draw.
+        if (!last_image_timestamp && !$('#lens_save').prop('disabled')) {
+            $('#lens_solve').prop('disabled', false);
+        }
+        const frame = this.entry;
+        selectFrameAlignment(frame, image_width, image_height);
+        redraw_planetarium = redraw_planetarium || image_timestamp != last_image_timestamp;
+        last_image_timestamp = image_timestamp;
+        if (!frameOverlayAvailable) {
+            setMapReady(false);
+            return;
+        }
+        if (redraw_planetarium) {
+            setMapReady(false);
+            var magnitude = Number($("#MAGNITUDE").val());
+            var constellations = $("#CONSTELLATIONS").prop('checked');
+            var constellationlabels = $("#CONSTELLATIONLABELS").prop('checked');
+            var showstars = $("#SHOWSTARS").prop('checked');
+            var showstarlabels = $("#SHOWSTARLABELS").prop('checked');
+            var showplanets = $("#SHOWPLANETS").prop('checked');
+            var showplanetlabels = $("#SHOWPLANETLABELS").prop('checked');
+
+            var azimuth_angle = Number($("#AZIMUTH_ANGLE").val());
+            var latitude_offset = Number($("#LATITUDE_OFFSET").val());
+            var longitude_offset = Number($("#LONGITUDE_OFFSET").val());
+            var image_circle_diameter = Number($("#IMAGE_CIRCLE_DIAMETER").val());
+            var offset_x = Number($("#OFFSET_X").val());
+            var offset_y = Number($("#OFFSET_Y").val());
+
+            const site = frameObserver || [camera_latitude, camera_longitude];
+            var vs_latitude = site[0] + latitude_offset;
+            var vs_longitude = site[1] + longitude_offset;
+
+            console.log("Latitude (with offset): " + vs_latitude);
+            console.log("Longitude (with offset): " + vs_longitude);
+
+
+            // Get the rendered size of the image and save w/h
+            const render_width = $('#latest-image').width();
+            const render_height = $('#latest-image').height();
+            // A hidden page can temporarily have no drawable area. Keep the
+            // current map until the image has a usable size again.
+            if (!(render_width > 0 && render_height > 0 && image_circle_diameter > 0)) return;
+
+            const image_scale = render_width / image_width;
+
+            // Determine offsets of the starmap overlay
+            const bias_left = ((( image_circle_diameter * image_scale - render_width ) / 2) - ( offset_x * image_scale )) * -1;
+            const bias_top = ((( image_circle_diameter * image_scale - render_height ) / 2) + ( offset_y * image_scale )) * -1;
+
+            // Apply those dimensions to the starmap container
+            $('#starmap_container').css({
+                width: render_width + 'px',
+                height: render_height  + 'px'
+            });
+
+            // Apply those dimensions to the starmap itself
+            $('#starmap').css({
+                left: bias_left + 'px',
+                top: bias_top + 'px'
+            });
+
+
+            // VirtualSky reverses north/south for some reason
+            var vs_az = 180 - azimuth_angle;
+
+            // Make sure azimuth is between 0 and 360
+            if (vs_az >= 360) {
+                vs_az -= 360;
+            } else if (vs_az < 0) {
+                vs_az += 360;
+            }
+
+
+            // Most cameras are east/west reversed
+            var vs_az = 360 - vs_az;
+            console.log("Calculated VirtualSky Azimuth: " + vs_az);
+
+
+            // Using image timestamp for planetarium
+            const clock = new Date((image_timestamp - frameTimeOffset) * 1000);
+            console.log("Time Offset: " + time_offset);
+            console.log("Date: " + clock);
+
+
+            var sky_options = {
+                id: 'starmap',
+                projection: 'fisheye',
+                planets: {{ url_for('indi_allsky.static', filename='virtualsky/virtualsky-planets.js', v=virtualsky_scripts['virtualsky/virtualsky-planets.js']) | tojson }},
+                flip_h: $('#FLIP_H').prop('checked'),
+                flip_v: $('#FLIP_V').prop('checked'),
+                live: false,
+                clock: clock,
+                latitude: vs_latitude,
+                longitude: vs_longitude,
+                az: vs_az,
+                fisheye_altitude: camera_altitude,
+                precession: precession,
+                fisheye_radial: Number($('#RADIAL_DISTORTION').val()),
+                fisheye_azimuth: Number($('#POINTING_AZIMUTH').val()),
+                magnitude: magnitude,
+                constellations: constellations,
+                constellationlabels: constellationlabels,
+                showstars: showstars,
+                showstarlabels: showstarlabels,
+                showplanets: showplanets,
+                showplanetlabels: showplanetlabels,
+                showgalaxy: true,
+                gridstep: 30,
+                gridlines_eq: true,
+                gridlines_az: false,
+                gridlines_gal: false,
+                ecliptic: false,
+                meridian: false,
+                mouse: false,
+                keyboard: false,
+                showdate: false,
+                showposition: false,
+                gradient: false,
+                transparent: true,
+                cardinalpoints: true,
+                credit: false,
+                /* force the star map size here by using the lensImageCircle
+                and resizing based on the ratio of the actual image sized versus rendered size */
+                width: image_circle_diameter * image_scale,
+                height: image_circle_diameter * image_scale,
+            };
+            if (planetarium) {
+                // Recreating VirtualSky on every poll retains old canvases via
+                // document handlers and repeatedly reloads its sky catalogs.
+                // Let resize update the canvas before changing wide/tall.
+                planetarium.init({...sky_options, projection: undefined, width: undefined, height: undefined});
+                planetarium.setClock(clock);
+                planetarium.checkLoaded();
+                planetarium.changeMagnitude(0);
+            } else {
+                planetarium = S.virtualsky(sky_options);
+                $('#starmap canvas').on('contextrestored', function() {
+                    planetarium.draw();
+                    drawSkyReticleOverlays(img ? img.entry : null);
+                });
+            }
+            // createSky rounds CSS dimensions; use the same scale on later redraws.
+            planetarium.resize(sky_options.width, sky_options.height);
+            VirtualSkyCalibration.install(planetarium, null);
+            if ($('#CALIBRATION_ENABLED').prop('checked') && lensCalibration) {
+                if (VirtualSkyCalibration.compatible(lensCalibration, calibrationGeometry(),
+                        [image_width, image_height], [...site, frameTimeOffset],
+                        calibrationCameraUuid, [$('#FLIP_H').prop('checked'), $('#FLIP_V').prop('checked')])) {
+                    VirtualSkyCalibration.install(planetarium, lensCalibration);
+                    updateCalibrationStatus();
+                } else {
+                    $('#calibration_summary').text('Calibration does not match this camera, image size or alignment. Solve again.');
+                }
+            }
+            VirtualSkyCalibration.maskImage(planetarium, overlayImageMask, [image_width, image_height],
+                this.entry.binmode, [image_circle_diameter, offset_x, offset_y]);
+<<<<<<<
+            planetarium.draw();
+            drawSkyReticleOverlays(this.entry);
+
+=======
+            planetarium.drawImmediate();
+            setMapReady(true);
+>>>>>>>
+
+            redraw_planetarium = false;
+
+        }
+    };
+
+
+    showImage(json_data['image_list'][0]);
+
+    setTimeout(loop, refreshInterval);
+}
+
+
+function showImage(entry) {
+    if (solvingFrame) entry = solvingFrame;
+    console.log('Showing image ' + entry["url"]);
+    img.entry = entry;
+    img.src = entry["url"];
+}
+
+
+function loadNextImage() {
+    console.log('Loading next image');
+    loadJS("{{ url_for(image_loop_view) }}", {'camera_id' : camera_id, 'limit_s' : 900, 'limit': 1, 'timestamp' : timestamp}, function() {});
+    setTimeout(loadNextImage, refreshInterval);
+}
+
+function sleep(time) {
+    return new Promise(resolve => setTimeout(resolve, time));
+}
+
+function loadJS(url, data, onDone, onError) {
+    if(!onDone)onDone=function(){};
+    if(!onError)onError=function(){};
+
+    $.ajax({
+        type: "GET",
+        url: url,
+        contentType: "application/json",
+        data: {...data, virtualsky: 1},
+        success: function(rdata){
+            json_data = rdata
+            $('#message').html(json_data['message']);
+
+        },
+        error: function(rdata){
+            onError(rdata.status);
+            $('#message').html('Error loading data.  Please check the logs.');
+        },
+    });
+}
+
+</script>
+{% endblock %}
+
+{% block content %}
+{# Match Config-save access, including installations with authentication disabled. #}
+{% set can_save_config = login_disabled or (current_user.is_authenticated and current_user.is_admin) %}
+{% macro calibration_input(field, units='', title='') %}
+<div class="virtualsky-field">
+    <label for="{{ field.id }}">{{ field.label.text }}{% if units %}&nbsp;({{ units }}){% endif %}</label>
+    {{ field(class='tw:input tw:input-bordered tw:input-sm tw:bg-base-100 tw:rounded-[var(--radius-box)] tw:text-sm', title=title) }}
+</div>
+{% endmacro %}
+<div id="virtualsky-page" class="tw:flex tw:flex-col tw:gap-4 tw:w-full">
+
+    <!-- Settings Accordion Drawer -->
+    <details id="virtualsky-settings" class="tw:collapse tw:collapse-arrow tw:bg-base-200 tw:border tw:border-base-300 tw:shadow-sm tw:rounded-[var(--radius-box)]">
+        <summary class="tw:collapse-title tw:flex tw:items-center tw:gap-2.5 tw:p-4 tw:text-sm tw:font-bold">
+            <i class="tw:icon-[lucide--settings] tw:w-4 tw:h-4"></i>
+            <span>Overlay settings</span>
+        </summary>
+        <div class="tw:collapse-content virtualsky-settings-body">
+            <form id="form_virtualsky" onSubmit="return false;">
+                <div class="tw:space-y-4">
+                    <div id="virtualsky-hint" class="tw:alert tw:alert-info tw:text-xs tw:rounded-[var(--radius-box)]">
+                        <i class="tw:icon-[lucide--info] tw:w-4 tw:h-4" aria-hidden="true"></i>
+                        <span><strong>Camera location and image time must be correct</strong> for accurate sky alignment.
+                            {% if can_save_config %}Solve fills the calibration fields for review; Save writes all nine geometry values and the optional overlay correction shown below. Camera pointing and alignment are also available under Config → Location.{% endif %}
+                        </span>
+                    </div>
+
+                    <div id="frame-alignment" hidden>
+                        <label class="tw:flex tw:items-center tw:gap-2">
+                            <input id="use-frame-alignment" type="checkbox" class="tw:toggle tw:toggle-primary tw:toggle-sm" checked>
+                            Use orientation recorded with this image
+                        </label>
+                    </div>
+                    <div class="virtualsky-groups">
+                        <fieldset class="virtualsky-group">
+                            <legend>Camera orientation</legend>
+                            <div class="virtualsky-fields">
+                                <div class="virtualsky-field">
+                                    <label for="lens_altitude">Altitude (°)</label>
+                                    <input id="lens_altitude" name="LENS_ALTITUDE" type="number" value="{{ camera_altitude }}" readonly
+                                           title="Angle above the horizon: 0° is horizontal, 90° is straight up (zenith). Updated by Solve and included in Save. To set it manually, use Altitude under Config → Location."
+                                           class="tw:input tw:input-bordered tw:input-sm tw:bg-base-100 tw:rounded-[var(--radius-box)] tw:text-sm">
+                                </div>
+                                {{ calibration_input(form_virtualsky.POINTING_AZIMUTH, '°', "Direction of the camera's lean: 0° N, 90° E, 180° S, 270° W. Ignored at 90° Altitude.") }}
+                                {{ calibration_input(form_virtualsky.AZIMUTH_ANGLE, '°', 'Rotation of the overlay and cardinal-direction labels to match the image.') }}
+                            </div>
+                            <p>Altitude: 0° horizontal, 90° straight up. Camera pointing direction describes the lean; Azimuth aligns the overlay with the image.</p>
+                        </fieldset>
+                        <fieldset class="virtualsky-group">
+                            <legend>Image alignment</legend>
+                            <div class="virtualsky-fields">
+                                {{ calibration_input(form_virtualsky.IMAGE_CIRCLE_DIAMETER, 'px', '180° reference diameter for the overlay. It may differ from the visible lens circle.') }}
+                                {{ calibration_input(form_virtualsky.OFFSET_X, 'px') }}
+                                {{ calibration_input(form_virtualsky.OFFSET_Y, 'px') }}
+                            </div>
+                            <p>VirtualSky reference circle size and position. The image-processing circle and offsets in Config are separate settings.</p>
+                        </fieldset>
+                        <fieldset class="virtualsky-group">
+                            <legend>Fine adjustments</legend>
+                            <div class="virtualsky-fields">
+                                {{ calibration_input(form_virtualsky.RADIAL_DISTORTION, title='Radial lens distortion measured by the normal solver. Zero uses the original equisolid lens model.') }}
+                                {{ calibration_input(form_virtualsky.LATITUDE_OFFSET, '°') }}
+                                {{ calibration_input(form_virtualsky.LONGITUDE_OFFSET, '°') }}
+                            </div>
+                            <p>Recovering camera pointing resets latitude/longitude offsets to zero.</p>
+                        </fieldset>
+                    </div>
+
+                    <fieldset class="virtualsky-group">
+                        <legend>Overlay orientation</legend>
+                        <div class="tw:flex tw:flex-wrap tw:gap-4">
+                            {% for field in [form_virtualsky.FLIP_H, form_virtualsky.FLIP_V] %}
+                            <label for="{{ field.id }}" class="tw:flex tw:items-center tw:gap-2">
+                                {{ field(class='tw:toggle tw:toggle-primary tw:toggle-sm') }}
+                                <span>{{ field.label.text }}</span>
+                            </label>
+                            {% endfor %}
+                        </div>
+
+                        <p>Solve detects rotation and mirroring automatically. These controls also allow manual adjustment; the image stays unchanged.</p>
+                    </fieldset>
+                    <fieldset class="virtualsky-group">
+                        <legend>Additional overlay correction (optional)</legend>
+                        <label class="virtualsky-layer" for="CALIBRATION_ENABLED">
+                            <input id="CALIBRATION_ENABLED" type="checkbox" class="tw:toggle tw:toggle-primary tw:toggle-sm"
+                                   {{ 'checked' if lens_calibration_enabled | default(false) else '' }}>
+                            Apply additional correction
+                        </label>
+                        <p>If stars still do not line up after a normal solve, enable this and solve again.
+                            The correction is applied only when validation confirms an improvement.
+                            Toggle to compare; only the overlay changes. Save remembers your choice.</p>
+                        <p id="calibration_summary" role="status" aria-live="polite"></p>
+                        <details><summary>Correction values included in Save</summary>
+                            <pre id="calibration_details" style="max-height: 12rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;"></pre>
+                        </details>
+                    </fieldset>
+                    <fieldset class="virtualsky-group">
+                        <legend>Display only</legend>
+                        <div class="virtualsky-display">
+                            {{ calibration_input(form_virtualsky.MAGNITUDE) }}
+                            {% for field, labels in [(form_virtualsky.CONSTELLATIONS, form_virtualsky.CONSTELLATIONLABELS), (form_virtualsky.SHOWSTARS, form_virtualsky.SHOWSTARLABELS), (form_virtualsky.SHOWPLANETS, form_virtualsky.SHOWPLANETLABELS)] %}
+                            <div class="virtualsky-layer" role="group" aria-label="{{ field.label.text }}">
+                                <label for="{{ field.id }}">
+                                    <input type="checkbox" class="tw:toggle tw:toggle-primary tw:toggle-sm" {{ 'checked' if field.data else '' }} id="{{ field.id }}" name="{{ field.name }}"> {{ field.label.text }}
+                                </label>
+                                <label for="{{ labels.id }}">
+                                    <input type="checkbox" class="tw:toggle tw:toggle-primary tw:toggle-sm" {{ 'checked' if labels.data else '' }} id="{{ labels.id }}" name="{{ labels.name }}"> {{ labels.label.text }}
+                                </label>
+                            </div>
+                            {% endfor %}
+                            <div class="virtualsky-layer" role="group" aria-label="Aircraft (ADS-B)">
+                                <label for="ADSB_OVERLAY">
+                                    <input type="checkbox" class="tw:toggle tw:toggle-primary tw:toggle-sm" {{ 'checked' if adsb_enable | default(false) else '' }} id="ADSB_OVERLAY"> Aircraft (ADS-B)
+                                </label>
+                                <select id="ADSB_OVERLAY_STYLE" class="tw:select tw:select-bordered tw:select-xs tw:bg-base-100 tw:text-base-content">
+                                    <option value="circle" selected>Circle</option>
+                                    <option value="cross">Crosshair</option>
+                                    <option value="both">Both</option>
+                                </select>
+                            </div>
+                            <div class="virtualsky-layer" role="group" aria-label="Satellites">
+                                <label for="SAT_OVERLAY">
+                                    <input type="checkbox" class="tw:toggle tw:toggle-primary tw:toggle-sm" {{ 'checked' if satellite_track_enable | default(false) else '' }} id="SAT_OVERLAY"> Satellites
+                                </label>
+                                <select id="SAT_OVERLAY_STYLE" class="tw:select tw:select-bordered tw:select-xs tw:bg-base-100 tw:text-base-content">
+                                    <option value="circle" selected>Circle</option>
+                                    <option value="cross">Crosshair</option>
+                                    <option value="both">Both</option>
+                                </select>
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <div class="tw:flex tw:flex-wrap tw:gap-3 tw:items-center">
+                        {% if can_save_config %}
+                        <button id="lens_solve" type="button" disabled
+                                title="Detect mirroring, solve overlay geometry and recover camera pointing if needed. Results fill the form for review; nothing is saved."
+                                class="tw:btn tw:btn-sm tw:btn-info tw:gap-1.5 tw:rounded-[var(--radius-box)]">
+                            <span id="lens_solve_spinner" class="tw:loading tw:loading-spinner tw:loading-xs" style="display: none;" aria-hidden="true"></span>
+                            Solve
+                        </button>
+
+                        <button id="lens_save" type="button"
+                                title="Save manual or solved geometry values and camera pointing to the configuration."
+                                aria-describedby="lens_save_help"
+                                class="tw:btn tw:btn-sm tw:btn-primary tw:gap-1.5 tw:rounded-[var(--radius-box)]">
+                            Save
+                        </button>
+                        <label class="tw:flex tw:items-center tw:gap-2 tw:cursor-pointer tw:select-none">
+                            <input type="checkbox" id="lens_reload_on_save" class="tw:toggle tw:toggle-primary tw:toggle-sm">
+                            <span title="Automatically restart capture service upon saving configuration"
+                                  class="tw:label-text tw:text-[0.625rem] tw:font-bold tw:uppercase tw:tracking-wider tw:cursor-pointer">Reload on Save</span>
+                        </label>
+                        <button id="lens_help_toggle" type="button"
+                                title="What do Solve and Save do?"
+                                aria-expanded="false" aria-controls="lens_help"
+                                class="tw:btn tw:btn-xs tw:btn-circle tw:btn-neutral">?</button>
+                        {% endif %}
+
+                        <a href="https://github.com/aaronwmorris/indi-allsky/wiki/VirtualSky" target="_blank"
+                           class="tw:btn tw:btn-xs tw:btn-neutral tw:btn-accent-hover tw:gap-1.5 tw:rounded-full tw:no-underline tw:ml-auto">
+                            <i class="tw:icon-[lucide--external-link] tw:w-3 tw:h-3 tw:block"></i> VirtualSky Wiki
+                        </a>
+
+                        {% if can_save_config %}
+                        <span id="lens_solver_message" class="tw:text-xs tw:text-base-content/70" aria-live="polite" role="status"></span>
+                        {% endif %}
+                    </div>
+
+                    {% if can_save_config %}
+                    <div id="lens_help" style="display: none;"
+                         class="tw:text-xs tw:text-base-content/70 tw:space-y-1.5 tw:pt-2 tw:max-w-2xl">
+                        <p><strong>Solve</strong> matches stars in the displayed image using the camera location and
+                           image time, which must be correct. It detects mirroring, starts from the entered alignment and searches for
+                           Altitude and Camera pointing direction if needed. Recovered pointing resets latitude/longitude offsets
+                           to zero. Results update the fields and overlay for review; nothing is saved.</p>
+                        <p>Use a clear, star-rich frame from the Gallery. Clouds, bright sky and obstructions can
+                           prevent a reliable match. A reasonable diameter and image-center estimate help the search.</p>
+                        <p>New solves account for the catalogue reference date. Save retains this correction;
+                           existing saved alignments keep their original coordinates until solved again.</p>
+                        <p>Lens curvature separates radial lens distortion from camera tilt. It is calibrated by
+                           the normal solver; zero retains the original equisolid projection.</p>
+                        <p id="lens_save_help"><strong>Save</strong> writes all nine calibration values and overlay flips to the camera configuration,
+                           including manually entered values. Display controls are not saved. Azimuth also repositions
+                           the cardinal-direction labels burned into future captured images.</p>
+                        <p><strong>Additional overlay correction</strong> is optional and can reduce residual mismatches
+                           after the normal solve. It requires a reliable star match and uses the detection mask
+                           and sky ROI as hints. The correction is accepted only when independent validation stars
+                           support an improvement; otherwise the normal alignment is kept and the reason is shown.
+                           Save stores the model and whether it is enabled; only the overlay is corrected.</p>
+                        <p><strong>Reload on Save</strong> also reloads the capture service to apply the saved
+                           configuration. If unchecked, the values become page defaults after the next service reload.</p>
+                        <p>Direction labels stay inside the visible photo and its image mask. Directions outside
+                           the camera's view are shown near the edge as direction cues.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </details>
+
+    <!-- Planetarium Map Canvas and Download Row -->
+    <div class="tw:text-center tw:space-y-4">
+        <div id="message" class="tw:flex tw:items-center tw:justify-center tw:gap-2.5 tw:text-xs tw:text-base-content/50">
+            <span class="tw:loading tw:loading-spinner tw:loading-xs tw:text-info"></span> Loading Sky Map...
+        </div>
+        
+        <p id="frame-alignment-state" role="status" hidden></p>
+        <div id="wrapper" class="tw:relative tw:bg-neutral-950 tw:rounded-[var(--radius-box)] tw:border tw:border-base-300/40 tw:overflow-hidden tw:shadow-2xl tw:w-fit tw:max-w-full tw:mx-auto">
+            <img id="latest-image" crossorigin="anonymous" class="tw:max-h-[calc(100dvh-14rem)] tw:w-auto tw:h-auto tw:object-contain tw:block" alt="Live Allsky View">
+            <div id="starmap_container" class="tw:absolute tw:inset-0">
+                <div id="starmap"></div>
+            </div>
+        </div>
+
+        <div class="virtualsky-downloads tw:flex tw:flex-wrap tw:justify-center tw:items-center tw:gap-3 tw:mt-4">
+            <button id="download_overlay" type="button" class="tw:btn tw:btn-sm tw:btn-primary tw:h-11 tw:px-6 tw:rounded-[var(--radius-box)] shadow-sm tw:gap-2">
+                <i class="tw:icon-[lucide--layers] tw:w-4 tw:h-4 tw:block"></i> Download Image with Overlay
+            </button>
+            <button id="download_map" type="button" class="tw:btn tw:btn-sm tw:btn-info tw:btn-outline tw:h-11 tw:px-6 tw:rounded-[var(--radius-box)] shadow-sm tw:gap-2">
+                <i class="tw:icon-[lucide--download] tw:w-4 tw:h-4 tw:block"></i> Download Map Data
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function drawSkyReticleOverlay(sky, items, toggleSelector, styleSelector, color, labelKeys) {
+    if (!$(toggleSelector).prop('checked')) return;
+    if (!sky || !Array.isArray(items) || items.length === 0) return;
+
+    const canvas = $('#starmap canvas')[0];
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const style = $(styleSelector).val() || 'circle';
+    const dpr = canvas.width / Math.max(1, sky.wide);
+    const sizeScale = Math.max(1, sky.wide / 700);
+    const radius = 12 * dpr * sizeScale;
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = Math.max(1.5, 1.5 * dpr * sizeScale);
+    ctx.font = Math.round(11 * dpr * sizeScale) + 'px sans-serif';
+
+    items.forEach(item => {
+        const altDeg = Number(item.alt);
+        const azDeg = Number(item.az);
+        if (!Number.isFinite(altDeg) || !Number.isFinite(azDeg)) return;
+
+        const pos = sky.azel2xy(
+            (azDeg * sky.d2r) - (sky.az_off * sky.d2r),
+            altDeg * sky.d2r,
+            sky.wide,
+            sky.tall
+        );
+        if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
+
+        const cx = pos.x * dpr;
+        const cy = pos.y * dpr;
+        if (cx < 0 || cx >= canvas.width || cy < 0 || cy >= canvas.height) return;
+
+        ctx.beginPath();
+        if (style === 'circle' || style === 'both') {
+            ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
+        }
+        if (style === 'cross' || style === 'both') {
+            ctx.moveTo(cx - radius, cy);
+            ctx.lineTo(cx + radius, cy);
+            ctx.moveTo(cx, cy - radius);
+            ctx.lineTo(cx, cy + radius);
+        }
+        ctx.stroke();
+
+        const labelKey = (labelKeys || []).find(k => item[k]);
+        if (labelKey) {
+            ctx.fillText(String(item[labelKey]), cx + radius + (4 * dpr), cy + (4 * dpr));
+        }
+    });
+
+    ctx.restore();
+}
+
+
+function forceRedrawPlanetarium() {
+    if (img && json_data['image_list'].length > 0) {
+        redraw_planetarium = true;
+
+        showImage(json_data['image_list'][0]);
+    };
+}
+
+
+$("#MAGNITUDE").on("change", function() {
+    forceRedrawPlanetarium();
+});
+
+$("#CONSTELLATIONS").on("change", function() {
+    forceRedrawPlanetarium();
+});
+
+$("#CONSTELLATIONLABELS").on("change", function() {
+    forceRedrawPlanetarium();
+});
+
+$("#SHOWSTARS").on("change", function() {
+    forceRedrawPlanetarium();
+});
+
+$("#SHOWSTARLABELS").on("change", function() {
+    forceRedrawPlanetarium();
+});
+
+$("#SHOWPLANETS").on("change", function() {
+    forceRedrawPlanetarium();
+});
+
+$("#ADSB_OVERLAY, #ADSB_OVERLAY_STYLE, #SAT_OVERLAY, #SAT_OVERLAY_STYLE").on("change", function() {
+    forceRedrawPlanetarium();
+});
+
+$("#SHOWPLANETLABELS").on("change", function() {
+    forceRedrawPlanetarium();
+});
+
+
+function setResizeHandler(callback, timeout) {
+    var timer_id = undefined;
+    $(window).on("resize", function() {
+        if(timer_id != undefined) {
+            clearTimeout(timer_id);
+            timer_id = undefined;
+        }
+        timer_id = setTimeout(function() {
+            timer_id = undefined;
+            callback();
+        }, timeout);
+    });
+}
+
+function resize_callback() {
+    forceRedrawPlanetarium();
+}
+setResizeHandler(resize_callback, 200);
+$(document).on('visibilitychange', function() {
+    if (!document.hidden) forceRedrawPlanetarium();
+});
+
+
+function goFullscreen(elem) {
+    if(fullscreen) {
+        closeFullscreen();
+    } else {
+        openFullscreen(elem);
+    }
+}
+
+function openFullscreen(elem) {
+    if (elem.requestFullscreen) {
+        elem.requestFullscreen();
+    } else if (elem.webkitRequestFullscreen) { /* Safari */
+        elem.webkitRequestFullscreen();
+    } else if (elem.msRequestFullscreen) { /* IE11 */
+        elem.msRequestFullscreen();
+    }
+
+    fullscreen = true;
+}
+
+function closeFullscreen() {
+    if (document.exitFullscreen) {
+        document.exitFullscreen();
+    } else if (document.webkitExitFullscreen) { /* Safari */
+        document.webkitExitFullscreen();
+    } else if (document.msExitFullscreen) { /* IE11 */
+        document.msExitFullscreen();
+    }
+
+    fullscreen = false;
+}
+
+
+$( document ).ready(function() {
+    $('#latest-image').on("click", function() {
+        goFullscreen(this);
+    });
+
+    updateCalibrationStatus();
+    init();
+    // Sidebar/layout changes can resize the photo without a window resize.
+    new ResizeObserver(forceRedrawPlanetarium).observe(document.getElementById('latest-image'));
+});
+
+
+function saveBlob(blob, filename) {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = url;
+    a.download = filename;
+    a.target = '_self';
+    document.body.appendChild(a);
+    a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    setTimeout(() => {
+        a.remove();
+        URL.revokeObjectURL(url);
+    }, 1500);
+}
+
+function getDownloadTimestamp() {
+    return last_image_timestamp || Math.floor(Date.now() / 1000);
+}
+
+function drawSkyReticleOverlays(entry) {
+    if (!entry || !planetarium) return;
+    drawSkyReticleOverlay(planetarium, entry.aircraft, '#ADSB_OVERLAY', '#ADSB_OVERLAY_STYLE', '#00ffff', ['id']);
+    drawSkyReticleOverlay(planetarium, entry.satellites, '#SAT_OVERLAY', '#SAT_OVERLAY_STYLE', '#a3e635', ['title', 'id']);
+}
+
+async function downloadImageWithOverlay() {
+    const $btn = $('#download_overlay');
+    $btn.prop('disabled', true);
+
+    try {
+        if (!mapReady) return;
+        const imgElem = document.getElementById('latest-image');
+        if (!imgElem || !imgElem.src || !imgElem.complete || !imgElem.naturalWidth) {
+            console.warn('Image is not loaded yet.');
+            return;
+        }
+
+        const fullWidth = imgElem.naturalWidth;
+        const fullHeight = imgElem.naturalHeight;
+        const image_circle_diameter = Number($("#IMAGE_CIRCLE_DIAMETER").val()) || fullWidth;
+        const offset_x = Number($("#OFFSET_X").val()) || 0;
+        const offset_y = Number($("#OFFSET_Y").val()) || 0;
+
+        const full_bias_left = ((( image_circle_diameter - fullWidth ) / 2) - offset_x ) * -1;
+        const full_bias_top = ((( image_circle_diameter - fullHeight ) / 2) + offset_y ) * -1;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = fullWidth;
+        canvas.height = fullHeight;
+        const ctx = canvas.getContext('2d');
+
+        // Draw camera image at full resolution
+        ctx.drawImage(imgElem, 0, 0, fullWidth, fullHeight);
+
+        // Draw starmap overlay at full resolution if planetarium is active
+        if (planetarium && typeof planetarium.resize === 'function') {
+            const currWidth = planetarium.wide;
+            const currHeight = planetarium.tall;
+
+            // Render VirtualSky at full circle resolution
+            planetarium.resize(image_circle_diameter, image_circle_diameter);
+            if (typeof planetarium.drawImmediate === 'function') {
+                planetarium.drawImmediate();
+            }
+            drawSkyReticleOverlays(img ? img.entry : null);
+
+            const starmapCanvas = document.querySelector('#starmap canvas');
+            if (starmapCanvas) {
+                ctx.drawImage(starmapCanvas, full_bias_left, full_bias_top, image_circle_diameter, image_circle_diameter);
+            }
+
+            // Restore VirtualSky back to rendered preview size
+            if (currWidth && currHeight) {
+                planetarium.resize(currWidth, currHeight);
+                if (typeof planetarium.drawImmediate === 'function') {
+                    planetarium.drawImmediate();
+                }
+                drawSkyReticleOverlays(img ? img.entry : null);
+            }
+        } else {
+            const starmapCanvas = document.querySelector('#starmap canvas');
+            const starmapElem = document.getElementById('starmap');
+            if (starmapCanvas && starmapElem) {
+                const renderWidth = $('#latest-image').width() || fullWidth;
+                const scale = fullWidth / renderWidth;
+                const left = (parseFloat(starmapElem.style.left) || 0) * scale;
+                const top = (parseFloat(starmapElem.style.top) || 0) * scale;
+                const sw = (starmapCanvas.width || renderWidth) * scale;
+                const sh = (starmapCanvas.height || renderWidth) * scale;
+                ctx.drawImage(starmapCanvas, left, top, sw, sh);
+            }
+        }
+
+        canvas.toBlob(blob => {
+            saveBlob(blob, 'virtualsky_overlay_' + getDownloadTimestamp() + '.png');
+        }, 'image/png');
+    } catch (err) {
+        console.error('Failed to download composite image:', err);
+    } finally {
+        setTimeout(() => {
+            $btn.prop('disabled', !mapReady);
+        }, 500);
+    }
+}
+
+async function downloadMapData() {
+    const $btn = $('#download_map');
+    $btn.prop('disabled', true);
+
+    try {
+        if (!mapReady) return;
+        const imgElem = document.getElementById('latest-image');
+        const fullWidth = (imgElem && imgElem.naturalWidth) ? imgElem.naturalWidth : 3500;
+        const image_circle_diameter = Number($("#IMAGE_CIRCLE_DIAMETER").val()) || fullWidth;
+
+        if (planetarium && typeof planetarium.resize === 'function') {
+            const currWidth = planetarium.wide;
+            const currHeight = planetarium.tall;
+
+            // Render VirtualSky at full circle resolution
+            planetarium.resize(image_circle_diameter, image_circle_diameter);
+            if (typeof planetarium.drawImmediate === 'function') {
+                planetarium.drawImmediate();
+            }
+            drawSkyReticleOverlays(img ? img.entry : null);
+
+            const starmapCanvas = document.querySelector('#starmap canvas');
+            if (!starmapCanvas) {
+                console.warn('Star map canvas is not rendered yet.');
+                return;
+            }
+
+            // Copy to offscreen canvas before restoring planetarium size
+            const mapCanvas = document.createElement('canvas');
+            mapCanvas.width = image_circle_diameter;
+            mapCanvas.height = image_circle_diameter;
+            const mapCtx = mapCanvas.getContext('2d');
+            mapCtx.drawImage(starmapCanvas, 0, 0);
+
+            // Restore VirtualSky back to rendered preview size
+            if (currWidth && currHeight) {
+                planetarium.resize(currWidth, currHeight);
+                if (typeof planetarium.drawImmediate === 'function') {
+                    planetarium.drawImmediate();
+                }
+                drawSkyReticleOverlays(img ? img.entry : null);
+            }
+
+            mapCanvas.toBlob(blob => {
+                saveBlob(blob, 'virtualsky_map_' + getDownloadTimestamp() + '.png');
+            }, 'image/png');
+        } else {
+            const starmapCanvas = document.querySelector('#starmap canvas');
+            if (!starmapCanvas) {
+                console.warn('Star map canvas is not rendered yet.');
+                return;
+            }
+
+            starmapCanvas.toBlob(blob => {
+                saveBlob(blob, 'virtualsky_map_' + getDownloadTimestamp() + '.png');
+            }, 'image/png');
+        }
+    } catch (err) {
+        console.error('Failed to download map data:', err);
+    } finally {
+        setTimeout(() => {
+            $btn.prop('disabled', !mapReady);
+        }, 500);
+    }
+}
+
+$('#download_overlay, #download').on('click', function(e) {
+    e.preventDefault();
+    downloadImageWithOverlay();
+});
+
+$('#download_map').on('click', function(e) {
+    e.preventDefault();
+    downloadMapData();
+});
+
+
+const SOLVE_FIELDS = ['AZIMUTH_ANGLE', 'LATITUDE_OFFSET', 'LONGITUDE_OFFSET',
+                      'IMAGE_CIRCLE_DIAMETER', 'OFFSET_X', 'OFFSET_Y', 'RADIAL_DISTORTION'];
+
+// Read the alignment only when its photo has decoded. A gallery frame can
+// belong to a different site or session than the one capturing images now.
+var frameAlignmentKey = 'manual';
+var frameOverlayAvailable = true;
+var mapReady = false;
+var frameObserver;
+var frameTimeOffset;
+var manualGeometry;
+var lastFrame;
+var solvingFrame;
+
+function setMapReady(ready) {
+    mapReady = ready;
+    $('#starmap_container').css({visibility: ready ? 'visible' : 'hidden'});
+    $('#download_overlay, #download_map').prop('disabled', !ready);
+}
+
+function loadGeometry(values) {
+    for (const field of [...SOLVE_FIELDS, 'POINTING_AZIMUTH']) $('#' + field).val(values[field]);
+    camera_altitude = values.LENS_ALTITUDE;
+    $('#lens_altitude').val(camera_altitude);
+    precession = values.PRECESSION;
+    lensCalibration = values.CALIBRATION || null;
+    $('#CALIBRATION_ENABLED').prop('checked', Boolean(values.CALIBRATION_ENABLED));
+    calibrationMessage = '';
+    updateCalibrationStatus();
+}
+
+function showAlignmentState(message) {
+    $('#frame-alignment-state').text(message).prop('hidden', !message);
+}
+
+function selectFrameAlignment(entry, width, height) {
+    lastFrame = {entry, width, height};
+    const record = entry.star_alignment;
+    const matches = record && record.values && Array.isArray(record.image_size) && record.image_size[0] === width && record.image_size[1] === height;
+    const hasRecord = Object.hasOwn(entry, 'star_alignment');
+    const key = hasRecord ? (matches ? record.id : 'pending:' + entry.timestamp) : 'manual';
+    frameObserver = matches ? record.location : null;
+    frameTimeOffset = matches && Number.isFinite(record.observed_at) ? entry.timestamp - record.observed_at : time_offset;
+    if (key === frameAlignmentKey) return;
+    if (frameAlignmentKey === 'manual') manualGeometry = solverPayload('save');
+    frameAlignmentKey = key;
+    $('#frame-alignment').prop('hidden', !hasRecord);
+    $('#use-frame-alignment').prop('checked', hasRecord);
+    loadGeometry(matches ? record.values : manualGeometry);
+    frameOverlayAvailable = !hasRecord || Boolean(matches);
+    showAlignmentState(!hasRecord ? '' : matches ? 'Aligned by stars' : 'Orientation pending for this image');
+    redraw_planetarium = true;
+}
+
+function previewFrameGeometry() {
+    if (frameAlignmentKey === 'manual') return;
+    $('#use-frame-alignment').prop('checked', false);
+    frameOverlayAvailable = true;
+    showAlignmentState('Manual orientation preview');
+}
+
+$('#use-frame-alignment').on('change', function() {
+    if (!lastFrame) return;
+    if (this.checked) {
+        frameAlignmentKey = null;
+        selectFrameAlignment(lastFrame.entry, lastFrame.width, lastFrame.height);
+    } else {
+        loadGeometry(manualGeometry);
+        previewFrameGeometry();
+    }
+    forceRedrawPlanetarium();
+});
+
+function calibrationGeometry() {
+    return [...SOLVE_FIELDS.slice(0, 6).map(f => Number($('#' + f).val())),
+            camera_altitude, Number($('#POINTING_AZIMUTH').val()),
+            Number($('#RADIAL_DISTORTION').val()), Number(precession)];
+}
+
+function updateCalibrationStatus() {
+    $('#calibration_summary').text(lensCalibration
+        ? ( ($('#CALIBRATION_ENABLED').prop('checked') ? 'Additional correction enabled. ' : 'Additional correction off. ') + lensCalibration.summary )
+        : 'No additional correction applied. ' + (calibrationMessage || 'Use this if mismatches remain after a normal solve.'));
+    $('#calibration_details').text(lensCalibration ? JSON.stringify(lensCalibration, null, 2) : 'None');
+}
+
+$('#CALIBRATION_ENABLED').on('change', function() {
+    updateCalibrationStatus();
+    forceRedrawPlanetarium();
+});
+$(SOLVE_FIELDS.map(f => '#' + f).concat('#POINTING_AZIMUTH', '#FLIP_H', '#FLIP_V').join(', ')).on('change', function() {
+    previewFrameGeometry();
+    // A residual field belongs to one base alignment, not arbitrary new settings.
+    // Clear it before requesting a redraw, including when only a flip changes.
+    lensCalibration = null;
+    calibrationMessage = 'Alignment changed. Solve again to calculate an additional correction.';
+    updateCalibrationStatus();
+    forceRedrawPlanetarium();
+});
+
+function solverPayload(action) {
+    var payload = {'action': action, 'camera_id': camera_id};
+    payload['POINTING_AZIMUTH'] = $('#POINTING_AZIMUTH').val();
+    payload['LENS_ALTITUDE'] = camera_altitude;
+    payload['PRECESSION'] = action === 'solve' ? true : precession;
+    SOLVE_FIELDS.forEach(function(f) {
+        payload[f] = $('#' + f).val();
+    });
+    ['FLIP_H', 'FLIP_V'].forEach(function(f) {
+        payload[f] = $('#' + f).prop('checked');
+    });
+
+    payload.CALIBRATION_ENABLED = Boolean($('#CALIBRATION_ENABLED').prop('checked'));
+    if (action === 'save') payload.CALIBRATION = lensCalibration;
+    return payload;
+}
+
+// Outcome-conditional coloring for the #lens_solver_message banner:
+// muted default while idle/in-progress, success/error only on an actual outcome.
+function setSolverMessage(text, state) {
+    var $msg = $('#lens_solver_message');
+    $msg.removeClass('tw:text-error tw:text-success tw:text-base-content/70');
+    if (state === 'error') {
+        $msg.addClass('tw:text-error');
+    } else if (state === 'success') {
+        $msg.addClass('tw:text-success');
+    } else {
+        $msg.addClass('tw:text-base-content/70');
+    }
+    $msg.text(text);
+}
+
+// #lens_save is tw:btn-primary at rest -- red (tw:btn-error) is this app's
+// failure signal, so it is only ever applied after an actual failed save.
+function setSaveButtonFailed(failed) {
+    var $btn = $('#lens_save');
+    if (failed) {
+        $btn.removeClass('tw:btn-primary').addClass('tw:btn-error');
+    } else {
+        $btn.removeClass('tw:btn-error').addClass('tw:btn-primary');
+    }
+}
+
+$('#lens_help_toggle').on('click', function() {
+    var $help = $('#lens_help');
+    var open = $help.is(':visible');
+    $help.toggle(!open);
+    $(this).attr('aria-expanded', String(!open));
+});
+
+$('#lens_solve').on('click', function() {
+    if (!last_image_timestamp) {
+        setSolverMessage('No image loaded yet.', 'error');
+        return;
+    }
+
+    var payload = solverPayload('solve');
+    // use the timestamp of the frame actually being displayed, not whatever
+    // the image-list poll most recently fetched
+    payload['timestamp'] = last_image_timestamp;
+    // Keep the displayed frame available for reviewing a slow manual solve.
+    solvingFrame = lastFrame && lastFrame.entry;
+
+    $('#lens_solve').prop('disabled', true);
+    // Prevent concurrent save/solve requests; manual saving needs no solve.
+    $('#lens_save').prop('disabled', true);
+    $('#lens_solve_spinner').show();
+    setSolverMessage('Solving...', 'info');
+
+    $.ajax({
+        type: 'POST',
+        url: "{{ url_for('indi_allsky.ajax_lens_solver_view') }}",
+        contentType: 'application/json',
+        data: JSON.stringify(payload),
+        timeout: 60000,
+        success: function(rdata) {
+            if (rdata['success']) {
+                if (payload.timestamp !== last_image_timestamp) {
+                    setSolverMessage('The displayed image changed during the solve. Open that image in the gallery to try again.', 'info');
+                    return;
+                }
+                previewFrameGeometry();
+                precession = rdata['values']['PRECESSION'] === true;
+                SOLVE_FIELDS.forEach(function(f) {
+                    $('#' + f).val(rdata['values'][f]);
+                });
+                ['FLIP_H', 'FLIP_V'].forEach(function(f) {
+                    $('#' + f).prop('checked', rdata['values'][f]);
+                });
+
+                // A recovered orientation replaces the request's fixed pointing.
+                // Otherwise retain the heading used, even if it was edited in flight.
+                $('#POINTING_AZIMUTH').val(rdata['values']['POINTING_AZIMUTH'] !== undefined
+                    ? rdata['values']['POINTING_AZIMUTH'] : payload['POINTING_AZIMUTH']);
+                if (rdata['values']['LENS_ALTITUDE'] !== undefined) {
+                    camera_altitude = rdata['values']['LENS_ALTITUDE'];
+                    $('#lens_altitude').val(camera_altitude);
+                }
+                lensCalibration = rdata.calibration || null;
+                calibrationMessage = rdata.calibration_message || '';
+                updateCalibrationStatus();
+                forceRedrawPlanetarium();
+                setSolverMessage(rdata['message'], 'success');
+                setSaveButtonFailed(false);
+            } else {
+                setSolverMessage(rdata['message'], 'error');
+            }
+        },
+        error: function(xhr) {
+            var msg = 'Solve failed.';
+            if (xhr.responseJSON && xhr.responseJSON['message']) {
+                msg = xhr.responseJSON['message'];
+            }
+            setSolverMessage(msg, 'error');
+        },
+        complete: function() {
+            solvingFrame = null;
+            $('#lens_solve').prop('disabled', false);
+            $('#lens_save').prop('disabled', false);
+            $('#lens_solve_spinner').hide();
+        },
+    });
+});
+
+$('#lens_save').on('click', function() {
+    var payload = solverPayload('save');
+    payload['RELOAD_ON_SAVE'] = $('#lens_reload_on_save').prop('checked');
+
+    // one-shot opt-in, matching config.html's convention: force back to
+    // unchecked immediately so it doesn't silently carry over to a later save
+    $('#lens_reload_on_save').prop('checked', false);
+
+    $('#lens_save').prop('disabled', true);
+    $('#lens_solve').prop('disabled', true);
+    setSaveButtonFailed(false);
+    setSolverMessage('Saving...', 'info');
+
+    $.ajax({
+        type: 'POST',
+        url: "{{ url_for('indi_allsky.ajax_lens_solver_view') }}",
+        contentType: 'application/json',
+        data: JSON.stringify(payload),
+        timeout: 15000,
+        success: function(rdata) {
+            setSolverMessage(rdata['message'], 'success');
+        },
+        error: function(xhr) {
+            // ConfigSaveException returns 400 {'form_global': ['...']} with
+            // no 'message' key (mirrors AjaxConfigView) -- fall back to it
+            // before the generic string so the real validation error shows.
+            var msg = (xhr.responseJSON && (xhr.responseJSON['message'] || (xhr.responseJSON['form_global'] && xhr.responseJSON['form_global'][0]))) || 'Save failed.';
+            setSolverMessage(msg, 'error');
+            setSaveButtonFailed(true);
+        },
+        complete: function() {
+            $('#lens_solve').prop('disabled', !last_image_timestamp);
+            $('#lens_save').prop('disabled', false);
+        },
+    });
+});
+
+</script>
+{% endblock %}

@@ -5464,6 +5464,8 @@ class IndiAllskyConfigForm(FlaskForm):
     SATELLITE_TRACK__OVERLAY_STYLE   = SelectField('Reticle Style', choices=(('circle', 'Circle'), ('cross', 'Crosshair'), ('both', 'Circle + Crosshair')))
     SATELLITE_TRACK__OVERLAY_RADIUS  = IntegerField('Reticle Size (px)', default=15)
     SATELLITE_TRACK__OVERLAY_LABEL_ENABLE = BooleanField('Show Satellite Name on Reticle')
+    SATELLITE_TRACK__TLE_INCLUDE     = StringField('TLE Include Filter')
+    SATELLITE_TRACK__TLE_EXCLUDE     = StringField('TLE Exclude Filter')
     INDI_CONFIG_DEFAULTS             = TextAreaField('INDI Camera Config (Default)', validators=[DataRequired(), INDI_CONFIG_DEFAULTS_validator])
     INDI_CONFIG_DAY                  = TextAreaField('INDI Camera Config (Day)', validators=[DataRequired(), INDI_CONFIG_DAY_validator])
 
@@ -9592,6 +9594,21 @@ class IndiAllskyMiniTimelapseForm(FlaskForm):
     POST_SECONDS_SELECT              = SelectField('After selected image', choices=SECONDS_choices, validators=[DataRequired()])
     FRAMERATE_SELECT                 = SelectField('Speed', choices=FRAMERATE_SELECT_choices, validators=[DataRequired()])
     BITRATE_SELECT                   = SelectField('Bitrate/File size', choices=BITRATE_SELECT_choices, validators=[DataRequired()])
+    NOTE                             = StringField('Description', validators=[DataRequired()])
+
+
+class IndiAllskyCustomTimelapseForm(FlaskForm):
+    SOURCE_TYPE_choices = (
+        ('standard', 'All-sky images'),
+        ('panorama', 'Panorama images'),
+    )
+
+    CAMERA_ID                        = HiddenField('Camera ID', validators=[DataRequired()])
+    SOURCE_TYPE                      = SelectField('Images to use', choices=SOURCE_TYPE_choices, default='standard', validators=[DataRequired()])
+    START_TIME                       = StringField('Start Date/Time', validators=[DataRequired()])
+    END_TIME                         = StringField('End Date/Time', validators=[DataRequired()])
+    FRAMERATE_SELECT                 = SelectField('Speed', choices=IndiAllskyMiniTimelapseForm.FRAMERATE_SELECT_choices, default='10', validators=[DataRequired()])
+    BITRATE_SELECT                   = SelectField('Bitrate/File size', choices=IndiAllskyMiniTimelapseForm.BITRATE_SELECT_choices, default='5000k', validators=[DataRequired()])
     NOTE                             = StringField('Description', validators=[DataRequired()])
 
 

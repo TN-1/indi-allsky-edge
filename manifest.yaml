@@ -223,6 +223,14 @@ pull_requests:
     title: "Deduplicate queued VideoWorker tasks and run periodic network jobs on non-blocking misc queue"
     author: "TN-1"
 
+  - id: 3367
+    title: "feat: add custom time-range timelapse generator to Web UI and /ws/control"
+    author: "TN-1"
+
+  - id: 3368
+    title: "feat: add frame navigation, exact-second timestamp lookup, and export feedback to VirtualSky"
+    author: "TN-1"
+
   - id: 3116
     title: "Feature: Test Suite"
     author: "TN-1"
