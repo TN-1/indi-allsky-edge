@@ -32,7 +32,6 @@ from .. import constants
 from .. import asi676mc
 from .. import asi676mc_calibration
 from .. import dark_automation
-from ..processing import ImageProcessor
 from ..charts import BUILTIN_CHARTS, MAX_CUSTOM_CHARTS, build_chart_data, chart_configuration, chart_definitions, validate_chart_configuration
 from ..lens_solver import IndiAllSkyLensSolver
 from ..lens_solver import parseSolverRequestValues
@@ -6622,6 +6621,8 @@ class Fits2JpegView(BaseView):
 
         hdulist.close()
 
+        from ..processing import ImageProcessor
+
         image_processor = ImageProcessor(
             p_config,
             position_av,
@@ -11439,6 +11440,8 @@ class JsonImageProcessingView(JsonView):
         astro_av = Array('f', [0.0, 0.0, 0.0])
 
         hdulist.close()
+
+        from ..processing import ImageProcessor
 
         image_processor = ImageProcessor(
             p_config,
