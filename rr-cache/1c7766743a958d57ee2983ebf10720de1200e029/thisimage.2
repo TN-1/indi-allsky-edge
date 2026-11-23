@@ -46,6 +46,7 @@ from .adsb import AdsbAircraftHttpWorker
 from . import exposure as exposure_module
 from .capture_state import CameraCapabilities
 
+from .worker_init import configure_worker_logging
 from .flask import create_app
 from .flask import db
 from .flask.miscDb import miscDb
@@ -56,6 +57,13 @@ from .flask.models import IndiAllSkyDbCameraTable
 from .flask.models import IndiAllSkyDbFitsImageTable
 from .flask.models import IndiAllSkyDbImageTable
 from .flask.models import IndiAllSkyDbTaskQueueTable
+
+from .processing import ImageProcessor
+from .panorama import panoramaSourceCircleClipped
+from .miscUpload import miscUpload
+from .adsb import AdsbAircraftHttpWorker
+
+from . import exposure as exposure_module
 
 from sqlalchemy import func
 #from sqlalchemy.orm.exc import NoResultFound
@@ -137,44 +145,10 @@ class ImageWorker(Process):
         # frame is classified; the default bad/following path uses no cache.
         self.asi676mc_diagnostic_previous = {}
 
-        self.image_processor = ImageProcessor(
-            self.config,
-            self.position_av,
-            self.exposure_av,
-            self.gain_av,
-            self.binning_av,
-            self.sensors_temp_av,
-            self.sensors_user_av,
-            self.night_av,
-            self.astro_av,
-        )
-
-
-        exposure_class_str = self.config.get('CCD_CONFIG', {}).get('EXPOSURE_CLASSNAME', 'exposure_basic')
-        logger.warning('Exposure Class: %s', exposure_class_str)
-
-        try:
-            exposure_class = getattr(exposure_module, exposure_class_str)
-        except AttributeError:
-            logger.error('Unknown exposure class: %s', exposure_class_str)
-            exposure_class = getattr(exposure_module, 'exposure_basic')
-
-
-        self.exposure_o = exposure_class(
-            self.config,
-            self.exposure_av,
-            self.gain_av,
-            self.binning_av,
-            self.night_av,
-        )
-
-
-        self._miscDb = miscDb(self.config)
-        self._miscUpload = miscUpload(
-            self.config,
-            self.upload_q,
-            self.night_av,
-        )
+        self.image_processor = None
+        self.exposure_o = None
+        self._miscDb = None
+        self._miscUpload = None
 
 
         self.image_save_hook_process = None  # used for both pre- and post-hooks
@@ -236,11 +210,49 @@ class ImageWorker(Process):
 
 
     def run(self):
+        configure_worker_logging()
+
         # setup signal handling after detaching from the main process
         signal.signal(signal.SIGHUP, self.sighup_handler_worker)
         signal.signal(signal.SIGTERM, self.sigterm_handler_worker)
         signal.signal(signal.SIGINT, self.sigint_handler_worker)
         signal.signal(signal.SIGALRM, self.sigalarm_handler_worker)
+
+        self.image_processor = ImageProcessor(
+            self.config,
+            self.position_av,
+            self.exposure_av,
+            self.gain_av,
+            self.binning_av,
+            self.sensors_temp_av,
+            self.sensors_user_av,
+            self.night_av,
+            self.astro_av,
+        )
+
+        exposure_class_str = self.config.get('CCD_CONFIG', {}).get('EXPOSURE_CLASSNAME', 'exposure_basic')
+        logger.warning('Exposure Class: %s', exposure_class_str)
+
+        try:
+            exposure_class = getattr(exposure_module, exposure_class_str)
+        except AttributeError:
+            logger.error('Unknown exposure class: %s', exposure_class_str)
+            exposure_class = getattr(exposure_module, 'exposure_basic')
+
+        self.exposure_o = exposure_class(
+            self.config,
+            self.exposure_av,
+            self.gain_av,
+            self.binning_av,
+            self.night_av,
+        )
+
+        self._miscDb = miscDb(self.config)
+        self._miscUpload = miscUpload(
+            self.config,
+            self.upload_q,
+            self.night_av,
+        )
 
 
         ### use this as a method to log uncaught exceptions
@@ -538,7 +550,7 @@ class ImageWorker(Process):
         }
         exif_ifd = {
             piexif.ExifIFD.DateTimeOriginal  : exp_date_utc.strftime('%Y:%m:%d %H:%M:%S'),
-            piexif.ExifIFD.LensModel         : camera.lensName or '',
+            piexif.ExifIFD.LensModel         : camera.lensName,
             piexif.ExifIFD.LensSpecification : (focal_length, focal_length, f_number, f_number),
             piexif.ExifIFD.FocalLength       : focal_length,
             piexif.ExifIFD.FNumber           : f_number,
@@ -952,6 +964,9 @@ class ImageWorker(Process):
 
                 for aircraft in self.adsb_aircraft_list:
                     image_add_data['aircraft'].append(aircraft)
+
+            if self.image_processor.last_satellites:
+                image_add_data['satellites'] = list(self.image_processor.last_satellites)
 
 
             if self.star_alignment is not None:
@@ -2051,7 +2066,7 @@ class ImageWorker(Process):
             else:
                 img = Image.fromarray(cv2.cvtColor(scaled_data_8, cv2.COLOR_BGR2RGB))
 
-            img.save(str(tmpfile_name), quality=self.config['IMAGE_FILE_COMPRESSION']['jpg'], exif=jpeg_exif or b"")
+            img.save(str(tmpfile_name), quality=self.config['IMAGE_FILE_COMPRESSION']['jpg'], exif=jpeg_exif)
         elif self.config['IMAGE_EXPORT_RAW'] in ('png',):
             # Pillow does not support 16-bit RGB data
             # opencv is faster than Pillow with PNG
@@ -2282,7 +2297,7 @@ class ImageWorker(Process):
         if self.config['IMAGE_FILE_TYPE'] in ('jpg', 'jpeg'):
             # opencv is faster but we have exif data
             img_rgb = Image.fromarray(cv2.cvtColor(data, cv2.COLOR_BGR2RGB))
-            img_rgb.save(str(tmpfile_name), quality=self.config['IMAGE_FILE_COMPRESSION']['jpg'], exif=jpeg_exif or b"")
+            img_rgb.save(str(tmpfile_name), quality=self.config['IMAGE_FILE_COMPRESSION']['jpg'], exif=jpeg_exif)
         elif self.config['IMAGE_FILE_TYPE'] in ('png',):
             # exif does not appear to work with png
             #img_rgb = Image.fromarray(cv2.cvtColor(data, cv2.COLOR_BGR2RGB))
@@ -2292,7 +2307,7 @@ class ImageWorker(Process):
             cv2.imwrite(str(tmpfile_name), data, [cv2.IMWRITE_PNG_COMPRESSION, self.config['IMAGE_FILE_COMPRESSION']['png']])
         elif self.config['IMAGE_FILE_TYPE'] in ('webp',):
             img_rgb = Image.fromarray(cv2.cvtColor(data, cv2.COLOR_BGR2RGB))
-            img_rgb.save(str(tmpfile_name), quality=90, lossless=False, exif=jpeg_exif or b"")
+            img_rgb.save(str(tmpfile_name), quality=90, lossless=False, exif=jpeg_exif)
         elif self.config['IMAGE_FILE_TYPE'] in ('tif', 'tiff'):
             # exif does not appear to work with tiff
             img_rgb = Image.fromarray(cv2.cvtColor(data, cv2.COLOR_BGR2RGB))
@@ -2519,7 +2534,7 @@ class ImageWorker(Process):
         # write to temporary file
         if self.config['IMAGE_FILE_TYPE'] in ('jpg', 'jpeg'):
             img_rgb = Image.fromarray(cv2.cvtColor(pano_data, cv2.COLOR_BGR2RGB))
-            img_rgb.save(str(tmpfile_name), quality=self.config['IMAGE_FILE_COMPRESSION']['jpg'], exif=jpeg_exif or b"")
+            img_rgb.save(str(tmpfile_name), quality=self.config['IMAGE_FILE_COMPRESSION']['jpg'], exif=jpeg_exif)
         elif self.config['IMAGE_FILE_TYPE'] in ('png',):
             # exif does not appear to work with png
             #img_rgb = Image.fromarray(cv2.cvtColor(data, cv2.COLOR_BGR2RGB))
@@ -2529,7 +2544,7 @@ class ImageWorker(Process):
             cv2.imwrite(str(tmpfile_name), pano_data, [cv2.IMWRITE_PNG_COMPRESSION, self.config['IMAGE_FILE_COMPRESSION']['png']])
         elif self.config['IMAGE_FILE_TYPE'] in ('webp',):
             img_rgb = Image.fromarray(cv2.cvtColor(pano_data, cv2.COLOR_BGR2RGB))
-            img_rgb.save(str(tmpfile_name), quality=90, lossless=False, exif=jpeg_exif or b"")
+            img_rgb.save(str(tmpfile_name), quality=90, lossless=False, exif=jpeg_exif)
         elif self.config['IMAGE_FILE_TYPE'] in ('tif', 'tiff'):
             # exif does not appear to work with tiff
             img_rgb = Image.fromarray(cv2.cvtColor(pano_data, cv2.COLOR_BGR2RGB))
@@ -2665,7 +2680,7 @@ class ImageWorker(Process):
         # write to temporary file
         if self.config['IMAGE_FILE_TYPE'] in ('jpg', 'jpeg'):
             img_rgb = Image.fromarray(cv2.cvtColor(circular_image_data, cv2.COLOR_BGR2RGB))
-            img_rgb.save(str(tmpfile_name), quality=self.config['IMAGE_FILE_COMPRESSION']['jpg'], exif=jpeg_exif or b"")
+            img_rgb.save(str(tmpfile_name), quality=self.config['IMAGE_FILE_COMPRESSION']['jpg'], exif=jpeg_exif)
         elif self.config['IMAGE_FILE_TYPE'] in ('png',):
             # exif does not appear to work with png
             #img_rgb = Image.fromarray(cv2.cvtColor(data, cv2.COLOR_BGR2RGB))
@@ -2675,7 +2690,7 @@ class ImageWorker(Process):
             cv2.imwrite(str(tmpfile_name), circular_image_data, [cv2.IMWRITE_PNG_COMPRESSION, self.config['IMAGE_FILE_COMPRESSION']['png']])
         elif self.config['IMAGE_FILE_TYPE'] in ('webp',):
             img_rgb = Image.fromarray(cv2.cvtColor(circular_image_data, cv2.COLOR_BGR2RGB))
-            img_rgb.save(str(tmpfile_name), quality=90, lossless=False, exif=jpeg_exif or b"")
+            img_rgb.save(str(tmpfile_name), quality=90, lossless=False, exif=jpeg_exif)
         elif self.config['IMAGE_FILE_TYPE'] in ('tif', 'tiff'):
             # exif does not appear to work with tiff
             img_rgb = Image.fromarray(cv2.cvtColor(circular_image_data, cv2.COLOR_BGR2RGB))
@@ -2705,10 +2720,9 @@ class ImageWorker(Process):
 
 
     def write_realtime_keogram(self, data, camera):
-        if isinstance(data, type(None)) or getattr(data, 'size', 0) == 0:
+        if isinstance(data, type(None)):
             logger.warning('Realtime keogram data empty')
             return
-
 
 
         save_interval = self.config.get('REALTIME_KEOGRAM', {}).get('SAVE_INTERVAL', 25)

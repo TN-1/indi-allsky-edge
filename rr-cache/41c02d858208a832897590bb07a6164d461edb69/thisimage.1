@@ -1162,6 +1162,8 @@ def WEB_EXTRA_TEXT_validator(form, field):
 
 
     web_extra_text_p = Path(field.data)
+    if web_extra_text_p.name in ('flask.json', 'flask.json_old', 'password_key_backup.json'):
+        raise ValidationError('Invalid file name')
 
     try:
         if not web_extra_text_p.exists():
@@ -1381,9 +1383,6 @@ def LONGTERM_KEOGRAM__OFFSET_Y_validator(form, field):
 
 
 def LONGTERM_KEOGRAM__MONTH_LABEL_TEMPLATE_validator(form, field):
-    if not field.data:
-        return
-
     now = datetime.now()
 
     test_data = {
@@ -2684,16 +2683,10 @@ def SYNCAPI__UPLOAD_IMAGE_validator(form, field):
 
 
 def FILETRANSFER__LIBCURL_OPTIONS_validator(form, field):
-    if not field.data:
-        return
-
-    if isinstance(field.data, dict):
-        json_data = field.data
-    else:
-        try:
-            json_data = json.loads(field.data)
-        except (json.decoder.JSONDecodeError, TypeError) as e:
-            raise ValidationError(str(e))
+    try:
+        json_data = json.loads(field.data)
+    except json.decoder.JSONDecodeError as e:
+        raise ValidationError(str(e))
 
 
     import pycurl
@@ -3111,12 +3104,9 @@ def LIBCAMERA__AWB_validator(form, field):
 
 
 def LIBCAMERA__CAMERA_ID_validator(form, field):
-    if field.data is None or field.data == '':
-        return
-
     try:
         camera_id = int(field.data)
-    except (ValueError, TypeError):
+    except ValueError:
         raise ValidationError('Please enter a valid number')
 
     if camera_id < 0:
@@ -3288,7 +3278,7 @@ def DEW_HEATER__LEVEL_validator(form, field):
 def DEW_HEATER__THOLD_DIFF_validator(form, field):
     try:
         int(field.data)
-    except (ValueError, TypeError):
+    except ValueError:
         raise ValidationError('Please enter a valid number')
 
 
@@ -3340,7 +3330,7 @@ def FAN__LEVEL_validator(form, field):
 def FAN__THOLD_DIFF_validator(form, field):
     try:
         int(field.data)
-    except (ValueError, TypeError):
+    except ValueError:
         raise ValidationError('Please enter a valid number')
 
 
@@ -3581,9 +3571,6 @@ def TEMP_SENSOR__HDC302X_HEATER_validator(form, field):
 
 
 def TEMP_SENSOR__SI7021_HEATER_LEVEL_validator(form, field):
-    if field.data is None or field.data == '':
-        return
-
     try:
         data_str = str(field.data)
     except ValueError as e:
@@ -3595,12 +3582,9 @@ def TEMP_SENSOR__SI7021_HEATER_LEVEL_validator(form, field):
 
 
 def TEMP_SENSOR__TSL2561_GAIN_validator(form, field):
-    if field.data is None or field.data == '':
-        return
-
     try:
         data_i = int(field.data)
-    except (ValueError, TypeError) as e:
+    except ValueError as e:
         raise ValidationError('ValueError: {0:s}'.format(str(e)))
 
     if data_i < 0:
@@ -3611,12 +3595,9 @@ def TEMP_SENSOR__TSL2561_GAIN_validator(form, field):
 
 
 def TEMP_SENSOR__TSL2561_INT_validator(form, field):
-    if field.data is None or field.data == '':
-        return
-
     try:
         data_i = int(field.data)
-    except (ValueError, TypeError) as e:
+    except ValueError as e:
         raise ValidationError('ValueError: {0:s}'.format(str(e)))
 
     if data_i < 0:
@@ -3820,16 +3801,10 @@ def SATELLITE_TRACK__LABEL_LIMIT_validator(form, field):
 
 
 def INDI_CONFIG_DEFAULTS_validator(form, field):
-    if not field.data:
-        return
-
-    if isinstance(field.data, dict):
-        json_data = field.data
-    else:
-        try:
-            json_data = json.loads(field.data)
-        except (json.decoder.JSONDecodeError, TypeError) as e:
-            raise ValidationError(str(e))
+    try:
+        json_data = json.loads(field.data)
+    except json.decoder.JSONDecodeError as e:
+        raise ValidationError(str(e))
 
 
     for k in json_data.keys():
@@ -5474,6 +5449,10 @@ class IndiAllskyConfigForm(FlaskForm):
     ADSB__LABEL_LIMIT                = IntegerField('Label Limit', validators=[DataRequired(), ADSB__LABEL_LIMIT_validator])
     ADSB__AIRCRAFT_LABEL_TEMPLATE    = StringField('Aircraft Label Template', validators=[DataRequired(), ADSB__AIRCRAFT_LABEL_TEMPLATE_validator])
     ADSB__IMAGE_LABEL_TEMPLATE_PREFIX   = TextAreaField('Image Template Prefix', validators=[DataRequired(), ADSB__IMAGE_LABEL_TEMPLATE_PREFIX_validator])
+    ADSB__OVERLAY_ENABLE             = BooleanField('Enable Image Reticle Overlay')
+    ADSB__OVERLAY_STYLE              = SelectField('Reticle Style', choices=(('circle', 'Circle'), ('cross', 'Crosshair'), ('both', 'Circle + Crosshair')))
+    ADSB__OVERLAY_RADIUS             = IntegerField('Reticle Size (px)', default=15)
+    ADSB__OVERLAY_LABEL_ENABLE       = BooleanField('Show Callsign on Reticle')
     SATELLITE_TRACK__ENABLE          = BooleanField('Enable Satellite Tracking')
     SATELLITE_TRACK__DAYTIME_TRACK   = BooleanField('Daytime Tracking')
     SATELLITE_TRACK__ALT_DEG_MIN     = FloatField('Minimum Altitude (Degrees)', validators=[DataRequired(), SATELLITE_TRACK__ALT_DEG_MIN_validator])
@@ -5481,6 +5460,10 @@ class IndiAllskyConfigForm(FlaskForm):
     SATELLITE_TRACK__LABEL_LIMIT     = IntegerField('Label Limit', validators=[DataRequired(), SATELLITE_TRACK__LABEL_LIMIT_validator])
     SATELLITE_TRACK__SAT_LABEL_TEMPLATE = StringField('Satellite Label Template', validators=[DataRequired(), SATELLITE_TRACK__SAT_LABEL_TEMPLATE_validator])
     SATELLITE_TRACK__IMAGE_LABEL_TEMPLATE_PREFIX = TextAreaField('Image Template Prefix', validators=[DataRequired(), SATELLITE_TRACK__IMAGE_LABEL_TEMPLATE_PREFIX_validator])
+    SATELLITE_TRACK__OVERLAY_ENABLE  = BooleanField('Enable Image Reticle Overlay')
+    SATELLITE_TRACK__OVERLAY_STYLE   = SelectField('Reticle Style', choices=(('circle', 'Circle'), ('cross', 'Crosshair'), ('both', 'Circle + Crosshair')))
+    SATELLITE_TRACK__OVERLAY_RADIUS  = IntegerField('Reticle Size (px)', default=15)
+    SATELLITE_TRACK__OVERLAY_LABEL_ENABLE = BooleanField('Show Satellite Name on Reticle')
     INDI_CONFIG_DEFAULTS             = TextAreaField('INDI Camera Config (Default)', validators=[DataRequired(), INDI_CONFIG_DEFAULTS_validator])
     INDI_CONFIG_DAY                  = TextAreaField('INDI Camera Config (Day)', validators=[DataRequired(), INDI_CONFIG_DAY_validator])
 
@@ -5759,31 +5742,27 @@ class IndiAllskyConfigForm(FlaskForm):
 
 
         # check cropping
-        if self.IMAGE_CROP_ROI_X1.data is not None and self.IMAGE_CROP_ROI_X2.data is not None:
-            mod_image_crop_x = (self.IMAGE_CROP_ROI_X2.data - self.IMAGE_CROP_ROI_X1.data) % 2
-            if mod_image_crop_x:
-                self.IMAGE_CROP_ROI_X2.errors.append('X coordinates must be divisible by 2')
-                result = False
+        mod_image_crop_x = (self.IMAGE_CROP_ROI_X2.data - self.IMAGE_CROP_ROI_X1.data) % 2
+        if mod_image_crop_x:
+            self.IMAGE_CROP_ROI_X2.errors.append('X coordinates must be divisible by 2')
+            result = False
 
-        if self.IMAGE_CROP_ROI_Y1.data is not None and self.IMAGE_CROP_ROI_Y2.data is not None:
-            mod_image_crop_y = (self.IMAGE_CROP_ROI_Y2.data - self.IMAGE_CROP_ROI_Y1.data) % 2
-            if mod_image_crop_y:
-                self.IMAGE_CROP_ROI_Y2.errors.append('Y coordinates must be divisible by 2')
-                result = False
+        mod_image_crop_y = (self.IMAGE_CROP_ROI_Y2.data - self.IMAGE_CROP_ROI_Y1.data) % 2
+        if mod_image_crop_y:
+            self.IMAGE_CROP_ROI_Y2.errors.append('Y coordinates must be divisible by 2')
+            result = False
 
 
         # border
-        if self.IMAGE_BORDER__TOP.data is not None and self.IMAGE_BORDER__BOTTOM.data is not None:
-            if (self.IMAGE_BORDER__TOP.data + self.IMAGE_BORDER__BOTTOM.data) % 2:
-                self.IMAGE_BORDER__TOP.errors.append('Sum of top and bottom border must be divisible by 2')
-                self.IMAGE_BORDER__BOTTOM.errors.append('Sum of top and bottom border must be divisible by 2')
-                result = False
+        if (self.IMAGE_BORDER__TOP.data + self.IMAGE_BORDER__BOTTOM.data) % 2:
+            self.IMAGE_BORDER__TOP.errors.append('Sum of top and bottom border must be divisible by 2')
+            self.IMAGE_BORDER__BOTTOM.errors.append('Sum of top and bottom border must be divisible by 2')
+            result = False
 
-        if self.IMAGE_BORDER__LEFT.data is not None and self.IMAGE_BORDER__RIGHT.data is not None:
-            if (self.IMAGE_BORDER__LEFT.data + self.IMAGE_BORDER__RIGHT.data) % 2:
-                self.IMAGE_BORDER__LEFT.errors.append('Sum of left and right border must be divisible by 2')
-                self.IMAGE_BORDER__RIGHT.errors.append('Sum of left and right border must be divisible by 2')
-                result = False
+        if (self.IMAGE_BORDER__LEFT.data + self.IMAGE_BORDER__RIGHT.data) % 2:
+            self.IMAGE_BORDER__LEFT.errors.append('Sum of left and right border must be divisible by 2')
+            self.IMAGE_BORDER__RIGHT.errors.append('Sum of left and right border must be divisible by 2')
+            result = False
 
 
         # file transfer validation
@@ -6144,7 +6123,7 @@ class IndiAllskyConfigForm(FlaskForm):
                 self.DEW_HEATER__THOLD_DIFF_MED.errors.append('MEDIUM must be less than LOW')
                 self.DEW_HEATER__THOLD_DIFF_LOW.errors.append('LOW must be greater than MEDIUM')
                 result = False
-        except (ValueError, TypeError):
+        except ValueError:
             # integer validation is caught later
             pass
 
@@ -6314,7 +6293,7 @@ class IndiAllskyConfigForm(FlaskForm):
                 self.FAN__THOLD_DIFF_MED.errors.append('MEDIUM must be greater than LOW')
                 self.FAN__THOLD_DIFF_LOW.errors.append('LOW must be less than MEDIUM')
                 result = False
-        except (ValueError, TypeError):
+        except ValueError:
             # integer validation is caught later
             pass
 
@@ -8615,7 +8594,7 @@ class IndiAllskyTimelapseGeneratorForm_old(FlaskForm):
 
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super(IndiAllskyTimelapseGeneratorForm, self).__init__(*args, **kwargs)
 
         self.camera_id = kwargs['camera_id']
 
@@ -8901,7 +8880,7 @@ class IndiAllskyTimelapseGeneratorForm(FlaskForm):
 
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super(IndiAllskyTimelapseGeneratorForm, self).__init__(*args, **kwargs)
 
         self.camera_id = kwargs['camera_id']
 
@@ -9325,7 +9304,7 @@ class IndiAllskyUserInfoForm(FlaskForm):
     NAME              = StringField('Name', validators=[DataRequired(), USER__NAME_validator])
     EMAIL             = StringField('Email', render_kw={'readonly' : True, 'disabled' : 'disabled'})
     ADMIN             = BooleanField('Admin', render_kw={'disabled' : 'disabled'})
-    IDP               = SelectField('Identity Provider', choices=IDP_choices, validators=[], render_kw={'readonly' : True, 'disabled' : 'disabled'})
+    IDP               = SelectField('Identity Provider', choices=IDP_choices, validate_choice=False, validators=[], render_kw={'readonly' : True, 'disabled' : 'disabled'})
     CURRENT_PASSWORD  = PasswordField('Current Password', widget=PasswordInput(), validators=[], render_kw={'autocomplete' : 'new-password'})
     NEW_PASSWORD      = PasswordField('New Password', widget=PasswordInput(), validators=[USER__NEW_PASSWORD_validator], render_kw={'autocomplete' : 'new-password'})
     NEW_PASSWORD2     = PasswordField('', widget=PasswordInput(), validators=[], render_kw={'autocomplete' : 'new-password'})

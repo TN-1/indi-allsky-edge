@@ -207,6 +207,22 @@ pull_requests:
     title: "Add ADS-B aircraft reticle overlay for saved images and VirtualSky Web UI"
     author: "TN-1"
 
+  - id: 3363
+    title: "Hardening across web UI, APIs, and service configurations"
+    author: "TN-1"
+
+  - id: 3364
+    title: "Fix User page save failing silently due to read-only IDP choice validation"
+    author: "TN-1"
+
+  - id: 3365
+    title: "Switch multiprocessing start method to forkserver and lazy-import rawpy"
+    author: "TN-1"
+
+  - id: 3366
+    title: "Deduplicate queued VideoWorker tasks and run periodic network jobs on non-blocking misc queue"
+    author: "TN-1"
+
   - id: 3116
     title: "Feature: Test Suite"
     author: "TN-1"
