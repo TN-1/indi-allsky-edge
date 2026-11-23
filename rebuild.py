@@ -163,6 +163,44 @@ def write_composition_manifest(
     return manifest_md
 
 
+def _patch_qa_script_for_edge(workspace: Path, package_name: str) -> None:
+    """Update debian/tests/qa_test.sh for downstream package names in single-PR mode."""
+    qa_path = workspace / "debian" / "tests" / "qa_test.sh"
+    if not qa_path.exists():
+        return
+    text = qa_path.read_text(encoding="utf-8")
+    if f"{package_name} indi-allsky/latitude" not in text:
+        seed_block = (
+            f"\n{package_name} indi-allsky/latitude string -34.9285\n"
+            f"{package_name} indi-allsky/longitude string 138.6007\n"
+            f"{package_name} indi-allsky/elevation string 50\n"
+            f"{package_name} indi-allsky/web_user string admin\n"
+            f"{package_name} indi-allsky/web_pass password testpassword123\n"
+            f"{package_name} indi-allsky/web_pass_confirm password testpassword123\n"
+            "EOF\n"
+        )
+        text = text.replace("\nEOF\n", seed_block, 1)
+    if 'PKG_NAME="' not in text:
+        detect_block = (
+            'apt-get install -y "${DEB_FILES[@]}"\n'
+            'PKG_NAME=""\n'
+            'for deb in "${DEB_FILES[@]}"; do\n'
+            '    cand=$(dpkg-deb -f "$deb" Package 2>/dev/null || true)\n'
+            '    case "$cand" in\n'
+            '        indi-allsky*)\n'
+            '            PKG_NAME="$cand"\n'
+            '            break\n'
+            '            ;;\n'
+            '    esac\n'
+            'done\n'
+            'PKG_NAME="${PKG_NAME:-indi-allsky}"'
+        )
+        text = text.replace('apt-get install -y "${DEB_FILES[@]}"', detect_block, 1)
+    text = text.replace("dpkg-reconfigure -f noninteractive indi-allsky", 'dpkg-reconfigure -f noninteractive "$PKG_NAME"')
+    text = text.replace("apt-get purge -y indi-allsky", 'apt-get purge -y "$PKG_NAME"')
+    qa_path.write_text(text, encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="indi-allsky-edge Rebuild Engine")
     parser.add_argument("--manifest", type=Path, default=Path("manifest.yaml"), help="Path to manifest.yaml")
@@ -327,6 +365,8 @@ def main() -> int:
         apply_cmd.append(str(patch_file))
         apply_res = run_command(apply_cmd, cwd=workspace, check=False)
         if apply_res.returncode == 0:
+            if args.single_pr is not None:
+                _patch_qa_script_for_edge(workspace, package_name)
             run_command(["git", "commit", "-am", f"chore(reconciliation): {desc}"], cwd=workspace)
             integrated.append(f"Patch: {desc}")
             applied_patches.append({"file": patch_info["file"], "desc": desc})
