@@ -1383,6 +1383,9 @@ def LONGTERM_KEOGRAM__OFFSET_Y_validator(form, field):
 
 
 def LONGTERM_KEOGRAM__MONTH_LABEL_TEMPLATE_validator(form, field):
+    if not field.data:
+        return
+
     now = datetime.now()
 
     test_data = {
@@ -1956,6 +1959,14 @@ def IMAGE_EXPIRE_DAYS_validator(form, field):
 
     if field.data < 1:
         raise ValidationError('Image Expiration must be 1 or greater')
+
+
+def IMAGE_NON_DETECTION_EXPIRE_DAYS_validator(form, field):
+    if not isinstance(field.data, int):
+        raise ValidationError('Please enter valid number')
+
+    if field.data < 0:
+        raise ValidationError('Non-detection image expiration must be 0 or greater')
 
 
 def TIMELAPSE_EXPIRE_DAYS_validator(form, field):
@@ -2683,10 +2694,16 @@ def SYNCAPI__UPLOAD_IMAGE_validator(form, field):
 
 
 def FILETRANSFER__LIBCURL_OPTIONS_validator(form, field):
-    try:
-        json_data = json.loads(field.data)
-    except json.decoder.JSONDecodeError as e:
-        raise ValidationError(str(e))
+    if not field.data:
+        return
+
+    if isinstance(field.data, dict):
+        json_data = field.data
+    else:
+        try:
+            json_data = json.loads(field.data)
+        except (json.decoder.JSONDecodeError, TypeError) as e:
+            raise ValidationError(str(e))
 
 
     import pycurl
@@ -3104,9 +3121,12 @@ def LIBCAMERA__AWB_validator(form, field):
 
 
 def LIBCAMERA__CAMERA_ID_validator(form, field):
+    if field.data is None or field.data == '':
+        return
+
     try:
         camera_id = int(field.data)
-    except ValueError:
+    except (ValueError, TypeError):
         raise ValidationError('Please enter a valid number')
 
     if camera_id < 0:
@@ -3278,7 +3298,7 @@ def DEW_HEATER__LEVEL_validator(form, field):
 def DEW_HEATER__THOLD_DIFF_validator(form, field):
     try:
         int(field.data)
-    except ValueError:
+    except (ValueError, TypeError):
         raise ValidationError('Please enter a valid number')
 
 
@@ -3330,7 +3350,7 @@ def FAN__LEVEL_validator(form, field):
 def FAN__THOLD_DIFF_validator(form, field):
     try:
         int(field.data)
-    except ValueError:
+    except (ValueError, TypeError):
         raise ValidationError('Please enter a valid number')
 
 
@@ -3571,6 +3591,9 @@ def TEMP_SENSOR__HDC302X_HEATER_validator(form, field):
 
 
 def TEMP_SENSOR__SI7021_HEATER_LEVEL_validator(form, field):
+    if field.data is None or field.data == '':
+        return
+
     try:
         data_str = str(field.data)
     except ValueError as e:
@@ -3582,9 +3605,12 @@ def TEMP_SENSOR__SI7021_HEATER_LEVEL_validator(form, field):
 
 
 def TEMP_SENSOR__TSL2561_GAIN_validator(form, field):
+    if field.data is None or field.data == '':
+        return
+
     try:
         data_i = int(field.data)
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
         raise ValidationError('ValueError: {0:s}'.format(str(e)))
 
     if data_i < 0:
@@ -3595,9 +3621,12 @@ def TEMP_SENSOR__TSL2561_GAIN_validator(form, field):
 
 
 def TEMP_SENSOR__TSL2561_INT_validator(form, field):
+    if field.data is None or field.data == '':
+        return
+
     try:
         data_i = int(field.data)
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
         raise ValidationError('ValueError: {0:s}'.format(str(e)))
 
     if data_i < 0:
@@ -3801,10 +3830,16 @@ def SATELLITE_TRACK__LABEL_LIMIT_validator(form, field):
 
 
 def INDI_CONFIG_DEFAULTS_validator(form, field):
-    try:
-        json_data = json.loads(field.data)
-    except json.decoder.JSONDecodeError as e:
-        raise ValidationError(str(e))
+    if not field.data:
+        return
+
+    if isinstance(field.data, dict):
+        json_data = field.data
+    else:
+        try:
+            json_data = json.loads(field.data)
+        except (json.decoder.JSONDecodeError, TypeError) as e:
+            raise ValidationError(str(e))
 
 
     for k in json_data.keys():
@@ -5041,6 +5076,7 @@ class IndiAllskyConfigForm(FlaskForm):
     IMAGE_STACK_DAY                  = BooleanField('Day stacking [debug]')
     BACKUP_DB_PERIOD_DAYS            = IntegerField('DB Backup Frequency (days)', validators=[BACKUP_DB_PERIOD_DAYS_validator])
     IMAGE_EXPIRE_DAYS                = IntegerField('Image expiration (days)', validators=[DataRequired(), IMAGE_EXPIRE_DAYS_validator])
+    IMAGE_NON_DETECTION_EXPIRE_DAYS  = IntegerField('Non-detection image expiration (days)', validators=[IMAGE_NON_DETECTION_EXPIRE_DAYS_validator])
     IMAGE_RAW_EXPIRE_DAYS            = IntegerField('RAW Image expiration (days)', validators=[DataRequired(), IMAGE_EXPIRE_DAYS_validator])
     IMAGE_FITS_EXPIRE_DAYS           = IntegerField('FITS Image expiration (days)', validators=[DataRequired(), IMAGE_EXPIRE_DAYS_validator])
     TIMELAPSE_EXPIRE_DAYS            = IntegerField('Timelapse expiration (days)', validators=[DataRequired(), TIMELAPSE_EXPIRE_DAYS_validator])
@@ -5744,27 +5780,31 @@ class IndiAllskyConfigForm(FlaskForm):
 
 
         # check cropping
-        mod_image_crop_x = (self.IMAGE_CROP_ROI_X2.data - self.IMAGE_CROP_ROI_X1.data) % 2
-        if mod_image_crop_x:
-            self.IMAGE_CROP_ROI_X2.errors.append('X coordinates must be divisible by 2')
-            result = False
+        if self.IMAGE_CROP_ROI_X1.data is not None and self.IMAGE_CROP_ROI_X2.data is not None:
+            mod_image_crop_x = (self.IMAGE_CROP_ROI_X2.data - self.IMAGE_CROP_ROI_X1.data) % 2
+            if mod_image_crop_x:
+                self.IMAGE_CROP_ROI_X2.errors.append('X coordinates must be divisible by 2')
+                result = False
 
-        mod_image_crop_y = (self.IMAGE_CROP_ROI_Y2.data - self.IMAGE_CROP_ROI_Y1.data) % 2
-        if mod_image_crop_y:
-            self.IMAGE_CROP_ROI_Y2.errors.append('Y coordinates must be divisible by 2')
-            result = False
+        if self.IMAGE_CROP_ROI_Y1.data is not None and self.IMAGE_CROP_ROI_Y2.data is not None:
+            mod_image_crop_y = (self.IMAGE_CROP_ROI_Y2.data - self.IMAGE_CROP_ROI_Y1.data) % 2
+            if mod_image_crop_y:
+                self.IMAGE_CROP_ROI_Y2.errors.append('Y coordinates must be divisible by 2')
+                result = False
 
 
         # border
-        if (self.IMAGE_BORDER__TOP.data + self.IMAGE_BORDER__BOTTOM.data) % 2:
-            self.IMAGE_BORDER__TOP.errors.append('Sum of top and bottom border must be divisible by 2')
-            self.IMAGE_BORDER__BOTTOM.errors.append('Sum of top and bottom border must be divisible by 2')
-            result = False
+        if self.IMAGE_BORDER__TOP.data is not None and self.IMAGE_BORDER__BOTTOM.data is not None:
+            if (self.IMAGE_BORDER__TOP.data + self.IMAGE_BORDER__BOTTOM.data) % 2:
+                self.IMAGE_BORDER__TOP.errors.append('Sum of top and bottom border must be divisible by 2')
+                self.IMAGE_BORDER__BOTTOM.errors.append('Sum of top and bottom border must be divisible by 2')
+                result = False
 
-        if (self.IMAGE_BORDER__LEFT.data + self.IMAGE_BORDER__RIGHT.data) % 2:
-            self.IMAGE_BORDER__LEFT.errors.append('Sum of left and right border must be divisible by 2')
-            self.IMAGE_BORDER__RIGHT.errors.append('Sum of left and right border must be divisible by 2')
-            result = False
+        if self.IMAGE_BORDER__LEFT.data is not None and self.IMAGE_BORDER__RIGHT.data is not None:
+            if (self.IMAGE_BORDER__LEFT.data + self.IMAGE_BORDER__RIGHT.data) % 2:
+                self.IMAGE_BORDER__LEFT.errors.append('Sum of left and right border must be divisible by 2')
+                self.IMAGE_BORDER__RIGHT.errors.append('Sum of left and right border must be divisible by 2')
+                result = False
 
 
         # file transfer validation
@@ -6125,7 +6165,7 @@ class IndiAllskyConfigForm(FlaskForm):
                 self.DEW_HEATER__THOLD_DIFF_MED.errors.append('MEDIUM must be less than LOW')
                 self.DEW_HEATER__THOLD_DIFF_LOW.errors.append('LOW must be greater than MEDIUM')
                 result = False
-        except ValueError:
+        except (ValueError, TypeError):
             # integer validation is caught later
             pass
 
@@ -6295,7 +6335,7 @@ class IndiAllskyConfigForm(FlaskForm):
                 self.FAN__THOLD_DIFF_MED.errors.append('MEDIUM must be greater than LOW')
                 self.FAN__THOLD_DIFF_LOW.errors.append('LOW must be less than MEDIUM')
                 result = False
-        except ValueError:
+        except (ValueError, TypeError):
             # integer validation is caught later
             pass
 
@@ -7851,6 +7891,23 @@ class IndiAllskyGalleryViewerPreload(IndiAllskyGalleryViewer):
         app.logger.info('Dates processed in %0.4f s', dates_elapsed_s)
 
 
+def normalize_video_tags(raw_tags):
+    """Normalize comma-separated or list tags into unique lowercase tokens without leading '#'."""
+    if isinstance(raw_tags, (list, tuple)):
+        candidates = [str(t) for t in raw_tags]
+    else:
+        candidates = str(raw_tags or '').split(',')
+
+    normalized = []
+    seen = set()
+    for item in candidates:
+        tag = item.strip().lstrip('#').strip().lower()
+        if tag and tag not in seen:
+            seen.add(tag)
+            normalized.append(tag)
+    return normalized
+
+
 class IndiAllskyVideoViewer(FlaskForm):
     TIMEOFDAY_SELECT_choices = (
         ('all', 'All'),
@@ -7862,6 +7919,7 @@ class IndiAllskyVideoViewer(FlaskForm):
     YEAR_SELECT          = SelectField('Year', choices=[], validators=[])
     MONTH_SELECT         = SelectField('Month', choices=[], validators=[])
     TIMEOFDAY_SELECT     = SelectField('Time of Day', choices=TIMEOFDAY_SELECT_choices, validators=[])
+    TAG_FILTER           = StringField('Tag', validators=[])
 
 
     def __init__(self, *args, **kwargs):
@@ -7960,7 +8018,7 @@ class IndiAllskyVideoViewer(FlaskForm):
         return month_choices
 
 
-    def getVideos(self, year, month, timeofday):
+    def getVideos(self, year, month, timeofday, tag_filter=''):
         year_col = func.coalesce(
             IndiAllSkyDbVideoTable.dayDate_year,
             extract('year', IndiAllSkyDbVideoTable.dayDate),
@@ -8010,6 +8068,8 @@ class IndiAllskyVideoViewer(FlaskForm):
 
         app.logger.info('Found %d timelapses', videos_query.count())
 
+        filter_tags = normalize_video_tags(tag_filter)
+
         videos_data = []
         for v in videos_query:
             try:
@@ -8023,6 +8083,17 @@ class IndiAllskyVideoViewer(FlaskForm):
                 data = v.data
             else:
                 data = {}
+
+            entry_tags = normalize_video_tags(data.get('tags', []))
+            entry_note = str(data.get('note') or '')
+
+            if filter_tags:
+                note_lower = entry_note.lower()
+                if not any(
+                    any(ft in t for t in entry_tags) or ft in note_lower
+                    for ft in filter_tags
+                ):
+                    continue
 
             entry = {
                 'id'                : v.id,
@@ -8039,6 +8110,9 @@ class IndiAllskyVideoViewer(FlaskForm):
                 'avg_stars'         : int(data.get('avg_stars', 0)),
                 'avg_sqm'           : int(data.get('avg_sqm', 0)),
                 'youtube_uploaded'  : bool(data.get('youtube_id', False)),
+                'note'              : entry_note,
+                'tags'              : entry_tags,
+                'chart_summary'     : data.get('chart_summary'),
             }
             videos_data.append(entry)
 
@@ -8514,6 +8588,7 @@ class IndiAllskyMiniVideoViewer(FlaskForm):
                 'avg_stars'         : int(data.get('avg_stars', 0)),
                 'avg_sqm'           : int(data.get('avg_sqm', 0)),
                 'youtube_uploaded'  : bool(data.get('youtube_id', False)),
+                'chart_summary'     : data.get('chart_summary'),
             }
             videos_data.append(entry)
 
@@ -8596,7 +8671,7 @@ class IndiAllskyTimelapseGeneratorForm_old(FlaskForm):
 
 
     def __init__(self, *args, **kwargs):
-        super(IndiAllskyTimelapseGeneratorForm, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.camera_id = kwargs['camera_id']
 
@@ -8882,7 +8957,7 @@ class IndiAllskyTimelapseGeneratorForm(FlaskForm):
 
 
     def __init__(self, *args, **kwargs):
-        super(IndiAllskyTimelapseGeneratorForm, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.camera_id = kwargs['camera_id']
 

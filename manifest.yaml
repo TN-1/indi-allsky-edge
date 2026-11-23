@@ -265,3 +265,6 @@ reconciliation_patches:
 
   - file: "patches/02-reconcile-3345-3201.patch"
     description: "Reconcile VirtualSky flip_h/flip_v mirroring (#3201) with fisheye projection (#3345)"
+
+  - file: "patches/03-reconcile-3342-3257.patch"
+    description: "Remove hidden attribute from #latest-image in index_img.html when using #3257 inline script"
