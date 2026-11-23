@@ -1,8 +1,8 @@
 diff --git a/.github/workflows/package-deb.yml b/.github/workflows/package-deb.yml
-index 89711ab..02df8f8 100644
+index 89711abc..d02bf50c 100644
 --- a/.github/workflows/package-deb.yml
 +++ b/.github/workflows/package-deb.yml
-@@ -2,11 +2,10 @@ name: Build & Package Debian Release (.deb)
+@@ -2,11 +2,11 @@ name: Build & Package Debian Release (.deb)
  
  on:
    push:
@@ -13,10 +13,11 @@ index 89711ab..02df8f8 100644
 -  schedule:
 -    # Nightly build every night at 02:00 UTC
 -    - cron: '0 2 * * *'
++      - 'pr-*'
    workflow_dispatch:
      inputs:
        indi_core_tag:
-@@ -36,18 +35,18 @@ jobs:
+@@ -36,18 +36,18 @@ jobs:
        - name: Check for changes since last nightly
          id: check
          run: |
@@ -42,7 +43,19 @@ index 89711ab..02df8f8 100644
                echo "should_build=false" >> $GITHUB_OUTPUT
              else
                echo "New commits found, building."
-@@ -101,8 +100,8 @@ jobs:
+@@ -97,12 +97,20 @@ jobs:
+             VERSION="${VERSION#v}"
+             SUITE="stable"
+             IS_RELEASE="true"
++          elif [[ "${{ github.ref }}" == refs/tags/pr-* ]]; then
++            # Single-PR Test Build
++            DATE_STAMP=$(date +'%Y%m%d.%H%M')
++            BASE_VER=$(python3 misc/bump_version.py --show | awk '{print $NF}')
++            PR_TAG="${{ github.ref_name }}"
++            VERSION="${BASE_VER}~${PR_TAG//-/.}.${DATE_STAMP}"
++            SUITE="edge"
++            IS_RELEASE="false"
+           else
              # Nightly / Dev Build -> Nightly
              DATE_STAMP=$(date +'%Y%m%d.%H%M')
              BASE_VER=$(python3 misc/bump_version.py --show | awk '{print $NF}')
@@ -53,7 +66,7 @@ index 89711ab..02df8f8 100644
              IS_RELEASE="false"
            fi
  
-@@ -126,6 +125,12 @@ jobs:
+@@ -126,6 +134,12 @@ jobs:
        - name: Generate Release Notes Summary & Git Changelog
          run: |
            {
@@ -66,7 +79,7 @@ index 89711ab..02df8f8 100644
              echo "### Bundled INDI & Driver Versions"
              echo "* **INDI Core / Server**: \`${{ env.INDI_CORE_TAG }}\`"
              echo "* **INDI 3rd-Party Drivers**: \`${{ env.INDI_3RDPARTY_TAG }}\` (ZWO ASI, QHY, Player One, ToupTek, SVBONY, Starlight Xpress, etc.)"
-@@ -391,7 +396,9 @@ jobs:
+@@ -391,7 +405,9 @@ jobs:
      name: Publish Releases
      needs: [check-changes, build-deb]
      runs-on: ubuntu-latest
@@ -77,7 +90,7 @@ index 89711ab..02df8f8 100644
      steps:
        - name: Checkout Code
          uses: actions/checkout@v7
-@@ -412,23 +419,23 @@ jobs:
+@@ -412,23 +428,32 @@ jobs:
          env:
            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
  
@@ -92,26 +105,35 @@ index 89711ab..02df8f8 100644
 -          echo "=== Resetting nightly pre-release ==="
 -          # Delete existing nightly release and its tag in 1 call to wipe old assets instantly
 -          gh release delete nightly -y --cleanup-tag 2>/dev/null || true
-+          echo "=== Resetting edge pre-release ==="
-+          # Delete existing edge release and its tag in 1 call to wipe old assets instantly
-+          gh release delete edge -y --cleanup-tag 2>/dev/null || true
++          if [[ "${{ github.ref }}" == refs/tags/pr-* ]]; then
++            RELEASE_TAG="${{ github.ref_name }}"
++            RELEASE_TITLE="PR Test Build (${RELEASE_TAG})"
++            NOTES_FLAG="--notes 'Automated INDI Allsky Single-PR Test Build'"
++            echo "=== Resetting ${RELEASE_TAG} pre-release ==="
++            gh release delete "$RELEASE_TAG" -y 2>/dev/null || true
++          else
++            RELEASE_TAG="edge"
++            RELEASE_TITLE="Bleeding Edge Build"
++            NOTES_FLAG="--notes 'Automated INDI Allsky Bleeding Edge Build'"
++            echo "=== Resetting edge pre-release ==="
++            # Delete existing edge release and its tag in 1 call to wipe old assets instantly
++            gh release delete edge -y --cleanup-tag 2>/dev/null || true
++          fi
  
 -          # Create fresh nightly release with target commit SHA
 -          NOTES_FLAG="--notes 'Automated INDI Allsky Nightly Build'"
-+          # Create fresh edge release with target commit SHA
-+          NOTES_FLAG="--notes 'Automated INDI Allsky Bleeding Edge Build'"
            if [ -f "downloaded-debs/release_notes.md" ]; then
              NOTES_FLAG="--notes-file downloaded-debs/release_notes.md"
            fi
  
 -          gh release create nightly downloaded-debs/*.deb \
 -            --title "Nightly Build" \
-+          gh release create edge downloaded-debs/*.deb \
-+            --title "Bleeding Edge Build" \
++          gh release create "$RELEASE_TAG" downloaded-debs/*.deb \
++            --title "$RELEASE_TITLE" \
              --prerelease \
              --target "${{ github.sha }}" \
              $NOTES_FLAG
-@@ -437,7 +444,7 @@ jobs:
+@@ -437,7 +462,7 @@ jobs:
      name: Build & Deploy APT Repo (Cloudflare R2)
      needs: [check-changes, build-deb, publish]
      runs-on: ubuntu-latest

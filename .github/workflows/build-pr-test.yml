@@ -1,0 +1,54 @@
+name: Build Single-PR Test Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Upstream PR number to test in isolation (e.g. 3355)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  synthesize-pr-test:
+    name: Synthesize Single-PR Test Tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Orchestration Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install pyyaml
+
+      - name: Configure Git Identity
+        run: |
+          git config --global user.name "indi-allsky-edge CI"
+          git config --global user.email "ci@indi-allsky-edge.internal"
+
+      - name: Synthesize Single-PR Branch & Push Tag
+        env:
+          PUSH_TOKEN: ${{ secrets.EDGE_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUM="${{ inputs.pr_number }}"
+          if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]]; then
+            echo "Error: pr_number must be numeric, got '$PR_NUM'"
+            exit 1
+          fi
+
+          python3 rebuild.py --workspace workspace --single-pr "$PR_NUM" --target-branch "pr-test-${PR_NUM}"
+
+          cd workspace
+          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git"
+          git tag -f "pr-${PR_NUM}" HEAD
+          git push --force origin "refs/tags/pr-${PR_NUM}"

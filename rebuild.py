@@ -168,6 +168,7 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, default=Path("manifest.yaml"), help="Path to manifest.yaml")
     parser.add_argument("--workspace", type=Path, default=Path("workspace"), help="Workspace directory for git build")
     parser.add_argument("--target-branch", type=str, default="edge", help="Target branch name")
+    parser.add_argument("--single-pr", type=int, default=None, help="Synthesize only upstream/main + a single PR + packaging patch")
     parser.add_argument("--push", action="store_true", help="Push target branch to origin")
     args = parser.parse_args()
 
@@ -203,12 +204,21 @@ def main() -> int:
     applied_patches: list[dict] = []
 
     # 1. Integrate Upstream Pull Requests
-    pull_requests = manifest.get("pull_requests", [])
+    manifest_prs = manifest.get("pull_requests", [])
+    if args.single_pr is not None:
+        matched = next((p for p in manifest_prs if p.get("id") == args.single_pr), None)
+        pull_requests = [{
+            "id": args.single_pr,
+            "title": matched.get("title", f"PR #{args.single_pr}") if matched else f"PR #{args.single_pr}",
+        }]
+    else:
+        pull_requests = manifest_prs
+
     for pr in pull_requests:
         pr_id = pr["id"]
         title = pr.get("title", f"PR #{pr_id}")
 
-        if pr.get("excluded"):
+        if args.single_pr is None and pr.get("excluded"):
             reason = pr.get("reason", "Explicitly excluded in manifest")
             print(f"\n--> Excluding PR #{pr_id}: {title} ({reason})")
             excluded.append(f"PR #{pr_id}: {title} ({reason})")
@@ -274,7 +284,7 @@ def main() -> int:
                 excluded.append(f"PR #{pr_id}: {title} (Conflict on {len(unmerged)} file(s))")
 
     # 2. Integrate External Branches
-    external_refs = manifest.get("external_refs", [])
+    external_refs = [] if args.single_pr is not None else manifest.get("external_refs", [])
     for ext in external_refs:
         repo_url = ext["repo"]
         branch_name = ext["branch"]
@@ -301,11 +311,21 @@ def main() -> int:
 
     # 3. Apply Post-Merge Reconciliation Patches
     patches = manifest.get("reconciliation_patches", [])
+    if args.single_pr is not None:
+        if excluded:
+            print(f"\nError: Single-PR target #{args.single_pr} failed to integrate cleanly.")
+            return 1
+        patches = [p for p in patches if "01-edge-packaging" in p["file"]]
+
     for patch_info in patches:
         patch_file = manifest_file.parent / patch_info["file"]
         desc = patch_info.get("description", patch_file.name)
         print(f"\n--> Applying patch: {desc}")
-        apply_res = run_command(["git", "apply", str(patch_file)], cwd=workspace, check=False)
+        apply_cmd = ["git", "apply"]
+        if args.single_pr is not None:
+            apply_cmd.append("--exclude=debian/tests/qa_test.sh")
+        apply_cmd.append(str(patch_file))
+        apply_res = run_command(apply_cmd, cwd=workspace, check=False)
         if apply_res.returncode == 0:
             run_command(["git", "commit", "-am", f"chore(reconciliation): {desc}"], cwd=workspace)
             integrated.append(f"Patch: {desc}")
