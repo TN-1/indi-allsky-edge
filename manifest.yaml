@@ -231,6 +231,18 @@ pull_requests:
     title: "feat: add frame navigation, exact-second timestamp lookup, and export feedback to VirtualSky"
     author: "TN-1"
 
+  - id: 3369
+    title: "feat: add option to purge non-detection images older than X days"
+    author: "TN-1"
+
+  - id: 3370
+    title: "feat: add descriptions, tags, and tag filtering for night/day timelapses"
+    author: "TN-1"
+
+  - id: 3371
+    title: "feat: add all-night sky quality (stars and SQM) charts to timelapses"
+    author: "TN-1"
+
   - id: 3116
     title: "Feature: Test Suite"
     author: "TN-1"

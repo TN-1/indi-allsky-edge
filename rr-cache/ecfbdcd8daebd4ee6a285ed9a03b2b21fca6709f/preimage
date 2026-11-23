@@ -1,0 +1,3086 @@
+import os
+import time
+import math
+import io
+import json
+import cv2
+#import numpy
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
+from pathlib import Path
+import psutil
+import tempfile
+import signal
+import threading
+import traceback
+import logging
+
+import ephem
+
+from .aligned_media import SkyRemap, frame_geometry, process_stack_frame, stack_entries
+from . import constants
+from . import asi676mc
+from . import asi676mc_calibration
+
+from .timelapse import TimelapseGenerator
+from .panorama import buildPanoramaCropFilter
+from .panorama import buildPanoramaPanFilter
+from .panorama import buildPanoramaTimedPanFilter
+from .panorama import cropPanoramaArray
+from .panorama import validatePanoramaAspectRatio
+from .keogram import KeogramGenerator
+from .starTrails import StarTrailGenerator
+from .miscUpload import miscUpload
+from .aurora import IndiAllskyAuroraUpdate
+from .smoke import IndiAllskySmokeUpdate
+from .satellite_download import IndiAllskyUpdateSatelliteData
+from .maskProcessing import MaskProcessor
+from .backup import IndiAllskyDatabaseBackup
+from .events import broadcast_media_complete
+
+from .worker_init import configure_worker_logging
+from .flask import create_app
+from .flask import db
+from .flask.miscDb import miscDb
+
+from .flask.models import TaskQueueState
+from .flask.models import TaskQueueQueue
+from .flask.models import NotificationCategory
+
+from .flask.models import IndiAllSkyDbCameraTable
+from .flask.models import IndiAllSkyDbImageTable
+from .flask.models import IndiAllSkyDbVideoTable
+from .flask.models import IndiAllSkyDbMiniVideoTable
+from .flask.models import IndiAllSkyDbKeogramTable
+from .flask.models import IndiAllSkyDbStarTrailsTable
+from .flask.models import IndiAllSkyDbStarTrailsVideoTable
+from .flask.models import IndiAllSkyDbFitsImageTable
+from .flask.models import IndiAllSkyDbPanoramaImageTable
+from .flask.models import IndiAllSkyDbPanoramaVideoTable
+from .flask.models import IndiAllSkyDbRawImageTable
+from .flask.models import IndiAllSkyDbTaskQueueTable
+
+from sqlalchemy import func
+from sqlalchemy import or_
+from sqlalchemy import and_
+from sqlalchemy.sql.expression import false as sa_false
+from sqlalchemy.orm.exc import NoResultFound
+
+from multiprocessing import Process
+#from threading import Thread
+import queue
+
+from .exceptions import TimelapseException
+from .exceptions import TimeOutException
+from .exceptions import BackupFailure
+
+
+app = create_app()
+
+logger = logging.getLogger('indi_allsky')
+
+
+
+def build_video_chart_summary(samples, max_points=96):
+    """Downsample (createDate, stars, sqm) tuples into <= max_points averaged buckets."""
+    if not samples or max_points < 1:
+        return None
+
+    bucket_size = max(1, math.ceil(len(samples) / max_points))
+    labels = []
+    stars_series = []
+    sqm_series = []
+
+    for i in range(0, len(samples), bucket_size):
+        chunk = samples[i:i + bucket_size]
+        mid_dt = chunk[len(chunk) // 2][0]
+        labels.append(mid_dt.strftime('%H:%M') if hasattr(mid_dt, 'strftime') else str(mid_dt))
+
+        star_vals = [float(s[1]) for s in chunk if s[1] is not None]
+        sqm_vals = [float(s[2]) for s in chunk if s[2] is not None]
+
+        stars_series.append(round(sum(star_vals) / len(star_vals), 1) if star_vals else None)
+        sqm_series.append(round(sum(sqm_vals) / len(sqm_vals), 2) if sqm_vals else None)
+
+    if not any(v is not None for v in stars_series) and not any(v is not None for v in sqm_series):
+        return None
+
+    return {
+        'labels': labels,
+        'stars': stars_series,
+        'sqm': sqm_series,
+    }
+
+
+class VideoWorker(Process):
+
+    thumbnail_keogram_width = 1000
+    thumbnail_keogram_height_opt = 350  # if image is taller than width, it is scaled using height instead
+    thumbnail_startrail_width = 300
+    thumbnail_startrail_height_opt = 200
+    thumbnail_mini_timelapse_width = 300
+    thumbnail_mini_timelapse_height_opt = 200
+
+
+    def __init__(
+        self,
+        idx,
+        config,
+        error_q,
+        video_q,
+        upload_q,
+        night_av,
+        binning_av,
+        misc_q=None,
+    ):
+        super(VideoWorker, self).__init__()
+
+        self.name = 'Video-{0:d}'.format(idx)
+
+        self.config = config
+
+        self.error_q = error_q
+        self.video_q = video_q
+        self.misc_q = misc_q
+        self.upload_q = upload_q
+
+        self.night_av = night_av
+        self.binning_av = binning_av
+
+        self._miscDb = None
+        self._miscUpload = None
+
+        self.f_lock = None
+
+
+        if self.config.get('IMAGE_FOLDER'):
+            self.image_dir = Path(self.config['IMAGE_FOLDER']).absolute()
+        else:
+            self.image_dir = Path(__file__).parent.parent.joinpath('html', 'images').absolute()
+
+        # scratch files which may be deleted
+        self.scratch_base_dir = self.image_dir.joinpath('scratch')
+
+
+        self._shutdown = False
+
+
+
+    def sighup_handler_worker(self, signum, frame):
+        logger.warning('Caught HUP signal')
+
+        # set flag for program to stop processes
+        self._shutdown = True
+
+
+    def sigterm_handler_worker(self, signum, frame):
+        logger.warning('Caught TERM signal')
+
+        # set flag for program to stop processes
+        self._shutdown = True
+
+
+    def sigint_handler_worker(self, signum, frame):
+        logger.warning('Caught INT signal')
+
+        # set flag for program to stop processes
+        self._shutdown = True
+
+
+    def sigalarm_handler_worker(self, signum, frame):
+        raise TimeOutException()
+
+
+
+    def run(self):
+        configure_worker_logging()
+        try:
+            os.nice(19)  # lower priority
+        except OSError:
+            pass
+
+        # setup signal handling after detaching from the main process
+        signal.signal(signal.SIGHUP, self.sighup_handler_worker)
+        signal.signal(signal.SIGTERM, self.sigterm_handler_worker)
+        signal.signal(signal.SIGINT, self.sigint_handler_worker)
+        signal.signal(signal.SIGALRM, self.sigalarm_handler_worker)
+
+        self._miscDb = miscDb(self.config)
+        self._miscUpload = miscUpload(
+            self.config,
+            self.upload_q,
+            self.night_av,
+        )
+
+
+        # Calibration has its own serial thread so a long retained-FITS scan
+        # does not prevent the video worker from accepting timelapse jobs.
+        self._asi676mc_calibration_q = queue.Queue()
+        calibration_thread = threading.Thread(
+            target=self._asi676mcCalibrationWorker,
+            name='{0:s}-ASI676MC-calibration'.format(self.name),
+            daemon=True,
+        )
+        calibration_thread.start()
+
+        if self.misc_q is not None:
+            misc_thread = threading.Thread(
+                target=self._miscTaskWorker,
+                name='{0:s}-misc-tasks'.format(self.name),
+                daemon=True,
+            )
+            misc_thread.start()
+
+        ### use this as a method to log uncaught exceptions
+        try:
+            self.saferun()
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.error_q.put((str(e), tb))
+            raise e
+        finally:
+            self._asi676mc_calibration_q.put(None)
+            if self.misc_q is not None:
+                try:
+                    self.misc_q.put_nowait({'stop' : True})
+                except Exception:
+                    pass
+
+
+    def _miscTaskWorker(self):
+        """Process lightweight periodic network/data tasks without blocking on ffmpeg."""
+        while not self._shutdown:
+            try:
+                m_dict = self.misc_q.get(timeout=61)  # prime number
+            except queue.Empty:
+                continue
+
+            if m_dict.get('stop') or self._shutdown:
+                return
+
+            try:
+                with app.app_context():
+                    self.processTask(m_dict)
+            except Exception:
+                logger.exception('Unhandled error in misc task worker')
+
+
+    def saferun(self):
+        #raise Exception('Test exception handling in worker')
+
+        while True:
+            try:
+                v_dict = self.video_q.get(timeout=61)  # prime number
+            except queue.Empty:
+                continue
+
+
+            if v_dict.get('stop'):
+                logger.warning('Goodbye')
+                return
+
+            if self._shutdown:
+                logger.warning('Goodbye')
+                return
+
+
+            # new context for every task, reduces the effects of caching
+            with app.app_context():
+                self.processTask(v_dict)
+
+
+    def processTask(self, v_dict):
+        task_id = v_dict['task_id']
+
+        try:
+            task = IndiAllSkyDbTaskQueueTable.query\
+                .filter(IndiAllSkyDbTaskQueueTable.id == task_id)\
+                .filter(IndiAllSkyDbTaskQueueTable.state == TaskQueueState.QUEUED)\
+                .filter(IndiAllSkyDbTaskQueueTable.queue == TaskQueueQueue.VIDEO)\
+                .one()
+
+        except NoResultFound:
+            logger.error('Task ID %d not found', task_id)
+            return
+
+
+        task.setRunning()
+
+
+        action = task.data['action']
+        kwargs = task.data.get('kwargs', {})
+
+
+        try:
+            action_method = getattr(self, action)
+        except AttributeError:
+            logger.error('Unknown action: %s', action)
+            return
+
+
+        # perform the action
+        action_method(task, **kwargs)
+
+
+    def _loadAsi676mcCalibrationDatabase(self, source_details, progress_callback):
+        """Return every retained FITS row for one bound ASI676MC camera."""
+        camera_id = int(source_details['camera_id'])
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .first()
+        expected_uuid = str(source_details.get('camera_uuid') or '')
+        if (
+            camera is None
+            or not expected_uuid
+            or not camera.uuid
+            or str(camera.uuid) != expected_uuid
+        ):
+            raise RuntimeError(
+                'the ASI676MC selected for this database search has changed'
+            )
+        camera_name = asi676mc.camera_record_identity_name(camera)
+        if not asi676mc.camera_name_matches(camera_name):
+            raise RuntimeError(
+                'the selected database camera is no longer an ASI676MC'
+            )
+        retention_cutoff = datetime.strptime(
+            str(source_details['retention_cutoff']),
+            '%Y-%m-%d',
+        ).date()
+
+        fits_query = IndiAllSkyDbFitsImageTable.query\
+            .filter(IndiAllSkyDbFitsImageTable.camera_id == camera_id)\
+            .filter(IndiAllSkyDbFitsImageTable.dayDate >= retention_cutoff)\
+            .order_by(IndiAllSkyDbFitsImageTable.createDate.desc())
+        database_fits_count = fits_query.count()
+        fits_records = []
+        missing_local_count = 0
+        unsupported_count = 0
+        for index, fits_entry in enumerate(
+            fits_query.yield_per(250),
+            start=1,
+        ):
+            if index % 25 == 0 or index == database_fits_count:
+                progress_callback({
+                    'phase': 'database_catalog',
+                    'processed_files': index,
+                    'total_files': database_fits_count,
+                    'initial_target_files': database_fits_count,
+                    'detected_bad_count': 0,
+                })
+            try:
+                source_path = fits_entry.getFilesystemPath()
+                if not source_path.is_file():
+                    missing_local_count += 1
+                    continue
+                source_size = source_path.stat().st_size
+            except OSError:
+                missing_local_count += 1
+                continue
+            if not asi676mc_calibration.is_database_fits_path(source_path):
+                unsupported_count += 1
+                continue
+            fits_data = (
+                fits_entry.data
+                if isinstance(fits_entry.data, dict)
+                else {}
+            )
+            diagnostic = fits_data.get(
+                asi676mc.DIAGNOSTIC_METADATA_KEY,
+                {},
+            )
+            roles = (
+                diagnostic.get('roles', ())
+                if isinstance(diagnostic, dict)
+                else ()
+            )
+            signature = fits_data.get(asi676mc.SIGNATURE_METADATA_KEY)
+            fits_records.append({
+                'id': fits_entry.id,
+                'path': source_path,
+                'size': source_size,
+                'timestamp': fits_entry.createDate.timestamp(),
+                'exposure': fits_entry.exposure,
+                'gain': fits_entry.gain,
+                'binmode': fits_entry.binmode,
+                'width': fits_entry.width,
+                'height': fits_entry.height,
+                'signature': (
+                    dict(signature)
+                    if isinstance(signature, dict)
+                    else None
+                ),
+                'repair_status': fits_data.get(
+                    asi676mc.FITS_REPAIR_STATUS_METADATA_KEY
+                ),
+                'camera_name': camera_name,
+                'roles': [
+                    dict(role)
+                    for role in roles
+                    if isinstance(role, dict)
+                ],
+            })
+        repair_status = (
+            IndiAllSkyDbImageTable.data['asi676mc_repair_status'].as_string()
+        )
+        bad_images = IndiAllSkyDbImageTable.query\
+            .filter(IndiAllSkyDbImageTable.camera_id == camera_id)\
+            .filter(IndiAllSkyDbImageTable.dayDate >= retention_cutoff)\
+            .filter(repair_status.in_(asi676mc.DIAGNOSTIC_BAD_STATUSES))\
+            .order_by(IndiAllSkyDbImageTable.createDate.desc())\
+            .yield_per(250)
+        bad_frames = []
+        for image in bad_images:
+            image_data = image.data if isinstance(image.data, dict) else {}
+            bad_frames.append({
+                'timestamp': image.createDate.timestamp(),
+                'exposure': image.exposure,
+                'gain': image.gain,
+                'allow_standard': (
+                    image_data.get('asi676mc_repair_status') != 'repaired'
+                ),
+            })
+
+        return {
+            'fits_records': fits_records,
+            'bad_frames': bad_frames,
+            'source_details': {
+                'database_fits_count': database_fits_count,
+                'local_fits_count': len(fits_records),
+                'missing_local_count': missing_local_count,
+                'unsupported_count': unsupported_count,
+            },
+        }
+
+    def _saveAsi676mcCalibrationSignatures(
+        self,
+        source_details,
+        signature_updates,
+    ):
+        """Backfill threshold-independent ratios on inspected legacy rows."""
+        camera_id = int(source_details['camera_id'])
+        update_ids = sorted(int(record_id) for record_id in signature_updates)
+        batch_size = 250
+        for offset in range(0, len(update_ids), batch_size):
+            batch_ids = update_ids[offset:offset + batch_size]
+            entries = IndiAllSkyDbFitsImageTable.query\
+                .filter(IndiAllSkyDbFitsImageTable.camera_id == camera_id)\
+                .filter(IndiAllSkyDbFitsImageTable.id.in_(batch_ids))\
+                .all()
+            for entry in entries:
+                entry_data = (
+                    dict(entry.data)
+                    if isinstance(entry.data, dict)
+                    else {}
+                )
+                entry_data[asi676mc.SIGNATURE_METADATA_KEY] = dict(
+                    signature_updates[entry.id]
+                )
+                entry.data = entry_data
+            db.session.commit()
+
+    def _asi676mcCalibrationWorker(self):
+        """Run one calibration at a time without occupying the video queue."""
+        while True:
+            work_item = self._asi676mc_calibration_q.get()
+            if work_item is None:
+                return
+            task_id, session_id = work_item
+            with app.app_context():
+                try:
+                    task = IndiAllSkyDbTaskQueueTable.query\
+                        .filter(IndiAllSkyDbTaskQueueTable.id == task_id)\
+                        .filter(
+                            IndiAllSkyDbTaskQueueTable.state
+                            == TaskQueueState.RUNNING
+                        )\
+                        .one()
+                except NoResultFound:
+                    logger.error(
+                        'ASI676MC calibration task %d is no longer running',
+                        task_id,
+                    )
+                    continue
+                try:
+                    self._runAsi676mcCalibration(task, session_id)
+                except Exception:
+                    # A database/task update failure must not permanently
+                    # terminate the dedicated calibration consumer.
+                    logger.exception(
+                        'Unexpected ASI676MC calibration worker failure'
+                    )
+                finally:
+                    db.session.remove()
+
+    def generateAsi676mcCalibration(self, task, **kwargs):
+        """Queue staged calibration on the worker's dedicated serial thread.
+
+        The task remains RUNNING while the calibration thread works, but the
+        main video loop can immediately accept normal timelapse tasks.
+        """
+        session_id = str(kwargs['session_id'])
+        self._asi676mc_calibration_q.put((int(task.id), session_id))
+
+    def _runAsi676mcCalibration(self, task, session_id):
+        """Complete one queued calibration and publish its task outcome."""
+        try:
+            result = asi676mc_calibration.run_calibration_session(
+                session_id,
+                database_loader=self._loadAsi676mcCalibrationDatabase,
+                database_signature_saver=(
+                    self._saveAsi676mcCalibrationSignatures
+                ),
+            )
+        except Exception as error:
+            logger.exception(
+                'ASI676MC web calibration failed for session %s',
+                session_id,
+            )
+            # The task list is user-visible. Keep the full technical exception
+            # in the log, but show the same actionable wording as the
+            # calibration page instead of a path or internal engine phrase.
+            task.setFailed(
+                asi676mc_calibration.task_failure_message(error)
+            )
+            return
+
+        if result is None:
+            # Session cancellation is already recorded by the calibration
+            # layer. Expire the queue row instead of dereferencing None or
+            # presenting cancellation as either success or failure.
+            task.setExpired()
+            return
+
+        quality = result['quality']
+        if result.get('outcome') == 'threshold_suggestion':
+            message = (
+                'ASI676MC threshold suggestions available: {0} likely '
+                'purple / {1} likely normal'
+            ).format(
+                quality['likely_purple_count'],
+                quality['likely_normal_count'],
+            )
+        else:
+            message = 'ASI676MC calibration passed: {0} purple / {1} normal'.format(
+                quality['matched_bad_count'],
+                quality['matched_normal_count'],
+            )
+        task.setSuccess(message[:255])
+
+
+    def generateVideo(self, task, **kwargs):
+        timespec = kwargs['timespec']
+        night = bool(kwargs['night'])
+        camera_id = kwargs['camera_id']
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        task.setRunning()
+
+        now = datetime.now()
+
+        try:
+            d_dayDate = datetime.strptime(timespec, '%Y%m%d').date()
+        except ValueError:
+            logger.error('Invalid time spec')
+            task.setFailed('Invalid time spec')
+            return
+
+
+        if night:
+            timeofday = 'night'
+        else:
+            timeofday = 'day'
+
+
+        if self.config['FFMPEG_CODEC'] in ['libx264', 'libx265', 'h264_qsv', 'h264_omx', 'h264_v4l2m2m', 'hevc_v4l2m2m']:
+            video_format = 'mp4'
+        elif self.config['FFMPEG_CODEC'] in ['libvpx']:
+            video_format = 'webm'
+        else:
+            logger.error('Invalid codec in config, timelapse generation failed')
+            task.setFailed('Invalid codec in config, timelapse generation failed')
+            return
+
+
+        vid_folder = self._getVideoFolder(d_dayDate, camera)
+
+        video_file = vid_folder.joinpath(
+            'allsky-timelapse_ccd{0:d}_{1:s}_{2:s}_{3:d}.{4:s}'.format(
+                camera.id,
+                d_dayDate.strftime('%Y%m%d'),
+                timeofday,
+                int(now.timestamp()),
+                video_format,
+            )
+        )
+
+
+        try:
+            # delete old video entry if it exists
+            old_video_entry = IndiAllSkyDbVideoTable.query\
+                .join(IndiAllSkyDbVideoTable.camera)\
+                .filter(
+                    and_(
+                        IndiAllSkyDbCameraTable.id == camera.id,
+                        IndiAllSkyDbVideoTable.dayDate == d_dayDate,
+                        IndiAllSkyDbVideoTable.night == night,
+                    )
+                )\
+                .one()
+
+
+            if not self.config.get('TIMELAPSE_OVERWRITE'):
+                logger.error('Timelapse already exists, overwrite not permitted')
+                task.setFailed('Timelapse already exists, overwrite not permitted')
+                return
+
+
+            logger.warning('Removing old video db entry')
+
+            old_video_entry.deleteAsset()
+
+            db.session.delete(old_video_entry)
+            db.session.commit()
+        except NoResultFound:
+            pass
+
+
+        if video_file.exists():
+            logger.warning('Removing orphaned video file: %s', video_file)
+            video_file.unlink()
+
+
+        # find all files
+        timelapse_files_entries = IndiAllSkyDbImageTable.query\
+            .join(IndiAllSkyDbImageTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbImageTable.dayDate == d_dayDate)\
+            .filter(IndiAllSkyDbImageTable.night == night)\
+            .filter(IndiAllSkyDbImageTable.exclude == sa_false())\
+            .order_by(IndiAllSkyDbImageTable.createDate.asc())
+
+
+        timelapse_files_entries_count = timelapse_files_entries.count()
+        logger.info('Found %d images for timelapse', timelapse_files_entries_count)
+
+
+        timelapse_data = IndiAllSkyDbImageTable.query\
+            .add_columns(
+                func.max(IndiAllSkyDbImageTable.kpindex).label('image_max_kpindex'),
+                func.max(IndiAllSkyDbImageTable.ovation_max).label('image_max_ovation_max'),
+                func.max(IndiAllSkyDbImageTable.smoke_rating).label('image_max_smoke_rating'),
+                func.max(IndiAllSkyDbImageTable.stars).label('image_max_stars'),
+                func.avg(IndiAllSkyDbImageTable.stars).label('image_avg_stars'),
+                func.max(IndiAllSkyDbImageTable.moonphase).label('image_max_moonphase'),
+                func.avg(IndiAllSkyDbImageTable.sqm).label('image_avg_sqm'),
+            )\
+            .join(IndiAllSkyDbImageTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbImageTable.dayDate == d_dayDate)\
+            .filter(IndiAllSkyDbImageTable.night == night)\
+            .filter(IndiAllSkyDbImageTable.exclude == sa_false())\
+            .first()
+
+
+        # some of these values might be NULL which might cause other problems
+        try:
+            max_kpindex = float(timelapse_data.image_max_kpindex)
+            max_ovation_max = int(timelapse_data.image_max_ovation_max)
+            max_stars = int(timelapse_data.image_max_stars)
+            avg_stars = float(timelapse_data.image_avg_stars)
+            max_moonphase = float(timelapse_data.image_max_moonphase)
+            avg_sqm = float(timelapse_data.image_avg_sqm)
+        except TypeError:
+            max_kpindex = 0.0
+            max_ovation_max = 0
+            max_stars = 0
+            avg_stars = 0.0
+            max_moonphase = -1.0
+            avg_sqm = 0.0
+
+
+        try:
+            max_smoke_rating = int(timelapse_data.image_max_smoke_rating)
+        except ValueError:
+            max_smoke_rating = constants.SMOKE_RATING_NODATA
+        except TypeError:
+            max_smoke_rating = constants.SMOKE_RATING_NODATA
+
+
+        logger.info('Max kpindex: %0.2f, ovation: %d, smoke rating: %s', max_kpindex, max_ovation_max, constants.SMOKE_RATING_MAP_STR[max_smoke_rating])
+
+
+        frame_alignments = {}
+        timelapse_files = list()
+        chart_samples = list()
+        for entry in timelapse_files_entries:
+            p_entry = Path(entry.getFilesystemPath())
+
+            if not p_entry.exists():
+                logger.error('File not found: %s', p_entry)
+                continue
+
+            if p_entry.stat().st_size == 0:
+                continue
+
+            timelapse_files.append(p_entry)
+<<<<<<<
+            alignment = frame_geometry(entry.data, (entry.width, entry.height))
+            if alignment:
+                frame_alignments[p_entry] = alignment
+=======
+            chart_samples.append((entry.createDate, entry.stars, entry.sqm))
+>>>>>>>
+
+
+        if frame_alignments:
+            # Never splice an unconfirmed camera pose into a registered sky.
+            timelapse_files = [p for p in timelapse_files if p in frame_alignments]
+        timelapse_skip_frames = self.config.get('TIMELAPSE_SKIP_FRAMES', 4)
+
+        video_metadata = {
+            'type'          : constants.VIDEO,
+            'createDate'    : int(now.timestamp()),
+            'utc_offset'    : now.astimezone().utcoffset().total_seconds(),
+            'dayDate'       : d_dayDate.strftime('%Y%m%d'),
+            'night'         : night,
+            'framerate'     : self.config['FFMPEG_FRAMERATE'],
+            'frames'        : timelapse_files_entries_count - timelapse_skip_frames,
+            'camera_uuid'   : camera.uuid,
+        }
+
+        video_metadata['data'] = {
+            'max_kpindex'       : max_kpindex,
+            'max_ovation_max'   : max_ovation_max,
+            'max_smoke_rating'  : max_smoke_rating,
+            'max_stars'         : max_stars,
+            'avg_stars'         : avg_stars,
+            'max_moonphase'     : max_moonphase,
+            'avg_sqm'           : avg_sqm,
+        }
+        chart_summary = build_video_chart_summary(chart_samples)
+        if chart_summary:
+            video_metadata['data']['chart_summary'] = chart_summary
+
+
+        # Create DB entry before creating file
+        video_entry = self._miscDb.addVideo(
+            video_file.relative_to(self.image_dir),
+            camera.id,
+            video_metadata,
+        )
+
+
+        try:
+            # find existing keogram
+            keogram_entry = IndiAllSkyDbKeogramTable.query\
+                .join(IndiAllSkyDbKeogramTable.camera)\
+                .filter(
+                    and_(
+                        IndiAllSkyDbCameraTable.id == camera.id,
+                        IndiAllSkyDbKeogramTable.dayDate == d_dayDate,
+                        IndiAllSkyDbKeogramTable.night == night,
+                    )
+                )\
+                .one()
+
+            keogram_filename = keogram_entry.getFilesystemPath()
+        except NoResultFound:
+            keogram_filename = None
+
+
+        if self.config.get('TIMELAPSE', {}).get('USE_NIGHT_CONFIG', True):
+            pre_processor_class = self.config.get('TIMELAPSE', {}).get('PRE_PROCESSOR', 'standard')
+            framerate = self.config.get('FFMPEG_FRAMERATE', 25)
+            bitrate = self.config.get('FFMPEG_BITRATE', '5000k')
+            vf_scale = self.config.get('FFMPEG_VFSCALE', '')
+            ffmpeg_extra_options = self.config.get('FFMPEG_EXTRA_OPTIONS', '')
+        else:
+            if night:
+                pre_processor_class = self.config.get('TIMELAPSE', {}).get('PRE_PROCESSOR', 'standard')
+                framerate = self.config.get('FFMPEG_FRAMERATE', 25)
+                bitrate = self.config.get('FFMPEG_BITRATE', '5000k')
+                vf_scale = self.config.get('FFMPEG_VFSCALE', '')
+                ffmpeg_extra_options = self.config.get('FFMPEG_EXTRA_OPTIONS', '')
+            else:
+                pre_processor_class = self.config.get('TIMELAPSE', {}).get('PRE_PROCESSOR_DAY', 'standard')
+                framerate = self.config.get('FFMPEG_FRAMERATE_DAY', '25')
+                bitrate = self.config.get('FFMPEG_BITRATE_DAY', '5000k')
+                vf_scale = self.config.get('FFMPEG_VFSCALE_DAY', '')
+                ffmpeg_extra_options = self.config.get('FFMPEG_EXTRA_OPTIONS_DAY', '')
+
+
+        try:
+            tg = TimelapseGenerator(
+                self.config,
+                skip_frames=timelapse_skip_frames,
+                pre_processor_class=pre_processor_class,
+            )
+
+            tg.codec = self.config['FFMPEG_CODEC']
+            tg.framerate = framerate
+            tg.bitrate = bitrate
+            tg.vf_scale = vf_scale
+            tg.ffmpeg_extra_options = ffmpeg_extra_options
+
+            tg.pre_processor.frame_alignments = frame_alignments
+            tg.pre_processor.keogram = keogram_filename
+            tg.pre_processor.pre_scale = self.config.get('TIMELAPSE', {}).get('PRE_SCALE', 50)
+
+            tg.generate(video_file, timelapse_files)
+
+
+            try:
+                fileSize = video_file.stat().st_size
+            except FileNotFoundError:
+                fileSize = None
+
+
+            video_entry.fileSize = fileSize
+            video_metadata['fileSize'] = fileSize
+
+
+            video_entry.success = True
+            db.session.commit()
+        except TimelapseException:
+            self._miscDb.addNotification(
+                NotificationCategory.MEDIA,
+                'timelapse_video',
+                'Timelapse video failed to generate',
+                expire=timedelta(hours=12),
+            )
+
+            task.setFailed('Failed to generate timelapse: {0:s}'.format(str(video_file)))
+            return
+
+
+        # the video is written and marked successful; announce it before the uploads
+        if video_file.exists():
+            broadcast_media_complete('timelapse_complete', video_entry)
+        else:
+            logger.error('Timelapse reported success but %s does not exist', video_file)
+
+
+        task.setSuccess('Generated timelapse (mini_video_id={0:d}): {1:s}'.format(mini_video_entry.id, str(video_file)))
+
+
+        ### Upload ###
+        self._miscUpload.syncapi_video(video_entry, video_metadata)  # syncapi before s3
+        self._miscUpload.s3_upload_video(video_entry, video_metadata)
+        self._miscUpload.upload_video(video_entry)
+        self._miscUpload.youtube_upload_video(video_entry, video_metadata)
+
+
+    def generateMiniVideo(self, task, **kwargs):
+        image_id = kwargs['image_id']
+        panorama_image_id = kwargs.get('panorama_image_id')
+        panorama = panorama_image_id is not None
+        camera_id = kwargs['camera_id']
+        pre_seconds = int(kwargs['pre_seconds'])
+        post_seconds = int(kwargs['post_seconds'])
+        framerate = float(kwargs['framerate'])
+        bitrate_override = kwargs.get('bitrate')
+        note = str(kwargs['note'])
+
+
+        task.setRunning()
+
+
+        now = datetime.now()
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        image_entry = db.session.query(
+            IndiAllSkyDbImageTable,
+        )\
+            .join(IndiAllSkyDbImageTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .filter(IndiAllSkyDbImageTable.id == image_id)\
+            .one()
+
+
+        video_filter = ''
+        pan_mode = 'static'
+        if panorama:
+            panorama_image_entry = db.session.query(
+                IndiAllSkyDbPanoramaImageTable,
+            )\
+                .join(IndiAllSkyDbPanoramaImageTable.camera)\
+                .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+                .filter(IndiAllSkyDbPanoramaImageTable.id == panorama_image_id)\
+                .one()
+
+            try:
+                source_width = int(panorama_image_entry.width)
+                source_height = int(panorama_image_entry.height)
+                crop_x = int(kwargs['crop_x'])
+                crop_y = int(kwargs['crop_y'])
+                crop_width = int(kwargs['crop_width'])
+                crop_height = int(kwargs['crop_height'])
+                aspect_ratio = str(kwargs.get('aspect_ratio', 'free'))
+                pan_mode = str(kwargs.get('pan_mode', 'static'))
+                end_crop_x = int(kwargs.get('end_crop_x', crop_x))
+                end_crop_y = int(kwargs.get('end_crop_y', crop_y))
+                pan_direction = str(kwargs.get('pan_direction', 'shortest'))
+
+                video_filter = buildPanoramaCropFilter(
+                    source_width,
+                    source_height,
+                    crop_x,
+                    crop_y,
+                    crop_width,
+                    crop_height,
+                )
+                validatePanoramaAspectRatio(aspect_ratio, crop_width, crop_height)
+                if pan_mode == 'linear':
+                    buildPanoramaCropFilter(
+                        source_width,
+                        source_height,
+                        end_crop_x,
+                        end_crop_y,
+                        crop_width,
+                        crop_height,
+                    )
+                    video_filter = ''  # final filter depends on the usable frame count
+                elif pan_mode != 'static':
+                    raise ValueError('Unsupported panorama pan mode')
+            except (KeyError, TypeError, ValueError) as e:
+                logger.error('Invalid panorama crop: %s', str(e))
+                task.setFailed('Invalid panorama crop: {0:s}'.format(str(e)))
+                return
+
+
+        targetDate = image_entry.createDate
+        startDate = image_entry.createDate - timedelta(seconds=pre_seconds)
+        endDate = image_entry.createDate + timedelta(seconds=post_seconds)
+
+        d_dayDate = image_entry.dayDate
+        night = image_entry.night
+
+        thumbnail_image_entry = panorama_image_entry if panorama else image_entry
+
+        panorama_params = None
+        if panorama:
+            panorama_params = {
+                'source_width': source_width,
+                'source_height': source_height,
+                'crop_x': crop_x,
+                'crop_y': crop_y,
+                'crop_width': crop_width,
+                'crop_height': crop_height,
+                'aspect_ratio': aspect_ratio,
+                'pan_mode': pan_mode,
+                'end_crop_x': end_crop_x,
+                'end_crop_y': end_crop_y,
+                'pan_direction': pan_direction,
+                'video_filter': video_filter,
+            }
+
+        self._buildMiniVideo(
+            task=task,
+            camera=camera,
+            now=now,
+            targetDate=targetDate,
+            startDate=startDate,
+            endDate=endDate,
+            d_dayDate=d_dayDate,
+            night=night,
+            framerate=framerate,
+            bitrate_override=bitrate_override,
+            note=note,
+            thumbnail_image_entry=thumbnail_image_entry,
+            filename_prefix='allsky-panorama_minitimelapse' if panorama else 'allsky-minitimelapse',
+            use_panorama=panorama,
+            panorama_params=panorama_params,
+        )
+
+
+    def generateCustomVideo(self, task, **kwargs):
+        camera_id = int(kwargs['camera_id'])
+        framerate = float(kwargs.get('framerate', 10))
+        bitrate_override = kwargs.get('bitrate')
+        note = str(kwargs.get('note', 'Custom timelapse'))
+        source_type = str(kwargs.get('source_type', 'standard'))
+        use_panorama = source_type == 'panorama'
+
+        task.setRunning()
+
+        now = datetime.now()
+
+        try:
+            start_raw = kwargs['start_date']
+            end_raw = kwargs['end_date']
+            startDate = datetime.fromtimestamp(float(start_raw)) if isinstance(start_raw, (int, float)) else datetime.fromisoformat(str(start_raw))
+            endDate = datetime.fromtimestamp(float(end_raw)) if isinstance(end_raw, (int, float)) else datetime.fromisoformat(str(end_raw))
+            if startDate.tzinfo is not None:
+                startDate = startDate.astimezone().replace(tzinfo=None)
+            if endDate.tzinfo is not None:
+                endDate = endDate.astimezone().replace(tzinfo=None)
+        except (KeyError, TypeError, ValueError) as e:
+            logger.error('Invalid custom timelapse date range: %s', str(e))
+            task.setFailed('Invalid custom timelapse date range')
+            return
+
+        if startDate >= endDate:
+            logger.error('Custom timelapse start_date must be before end_date')
+            task.setFailed('Custom timelapse start_date must be before end_date')
+            return
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+        model = IndiAllSkyDbPanoramaImageTable if use_panorama else IndiAllSkyDbImageTable
+        first_entry = model.query\
+            .join(model.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(model.createDate >= startDate)\
+            .filter(model.createDate <= endDate)\
+            .filter(model.exclude == sa_false())\
+            .order_by(model.createDate.asc(), model.id.asc())\
+            .first()
+
+        if not first_entry:
+            logger.warning('No images found between %s and %s for camera %d', startDate, endDate, camera.id)
+            task.setFailed('No images found in selected time range')
+            return
+
+        targetDate = startDate + (endDate - startDate) / 2
+        d_dayDate = first_entry.dayDate
+        night = first_entry.night
+
+        self._buildMiniVideo(
+            task=task,
+            camera=camera,
+            now=now,
+            targetDate=targetDate,
+            startDate=startDate,
+            endDate=endDate,
+            d_dayDate=d_dayDate,
+            night=night,
+            framerate=framerate,
+            bitrate_override=bitrate_override,
+            note=note,
+            thumbnail_image_entry=first_entry,
+            filename_prefix='allsky-panorama_customtimelapse' if use_panorama else 'allsky-customtimelapse',
+            use_panorama=use_panorama,
+            panorama_params=None,
+        )
+
+
+    def _buildMiniVideo(
+        self,
+        task,
+        camera,
+        now,
+        targetDate,
+        startDate,
+        endDate,
+        d_dayDate,
+        night,
+        framerate,
+        bitrate_override,
+        note,
+        thumbnail_image_entry,
+        filename_prefix,
+        use_panorama=False,
+        panorama_params=None,
+    ):
+        has_crop = panorama_params is not None
+        panorama = use_panorama or has_crop
+        if has_crop:
+            source_width = panorama_params['source_width']
+            source_height = panorama_params['source_height']
+            crop_x = panorama_params['crop_x']
+            crop_y = panorama_params['crop_y']
+            crop_width = panorama_params['crop_width']
+            crop_height = panorama_params['crop_height']
+            aspect_ratio = panorama_params['aspect_ratio']
+            pan_mode = panorama_params['pan_mode']
+            end_crop_x = panorama_params['end_crop_x']
+            end_crop_y = panorama_params['end_crop_y']
+            pan_direction = panorama_params['pan_direction']
+            video_filter = panorama_params['video_filter']
+        else:
+            pan_mode = 'static'
+            video_filter = ''
+
+        if night:
+            timeofday = 'night'
+        else:
+            timeofday = 'day'
+
+
+        if self.config['FFMPEG_CODEC'] in ['libx264', 'libx265', 'h264_qsv', 'h264_omx', 'h264_v4l2m2m', 'hevc_v4l2m2m']:
+            video_format = 'mp4'
+        elif self.config['FFMPEG_CODEC'] in ['libvpx']:
+            video_format = 'webm'
+        else:
+            logger.error('Invalid codec in config, timelapse generation failed')
+            task.setFailed('Invalid codec in config, timelapse generation failed')
+            return
+
+
+        codec = self.config['FFMPEG_CODEC']
+        if panorama and codec == 'h264_qsv':
+            # QSV does not support the large resolutions commonly used by panoramas.
+            codec = 'libx264'
+
+
+        vid_folder = self._getVideoFolder(d_dayDate, camera)
+
+        video_file = vid_folder.joinpath(
+            '{0:s}_ccd{1:d}_{2:s}_{3:s}_{4:d}.{5:s}'.format(
+                filename_prefix,
+                camera.id,
+                d_dayDate.strftime('%Y%m%d'),
+                timeofday,
+                int(now.timestamp()),
+                video_format,
+            )
+        )
+
+
+        try:
+            # delete old video entry if it exists
+            old_mini_video_entry = IndiAllSkyDbMiniVideoTable.query\
+                .join(IndiAllSkyDbMiniVideoTable.camera)\
+                .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+                .filter(
+                    or_(
+                        IndiAllSkyDbMiniVideoTable.filename == str(video_file),
+                        IndiAllSkyDbMiniVideoTable.filename == str(video_file.relative_to(self.image_dir)),
+                    )
+                )\
+                .one()
+
+
+            if not self.config.get('TIMELAPSE_OVERWRITE'):
+                logger.error('Mini Timelapse already exists, overwrite not permitted')
+                task.setFailed('Mini Timelapse already exists, overwrite not permitted')
+                return
+
+
+            logger.warning('Removing old video db entry')
+
+            old_mini_video_entry.deleteAsset()
+
+            db.session.delete(old_mini_video_entry)
+            db.session.commit()
+        except NoResultFound:
+            pass
+
+
+        if video_file.exists():
+            logger.warning('Removin orphaned Video file: %s', video_file)
+            video_file.unlink()
+
+
+        # find all files
+        mini_timelapse_model = IndiAllSkyDbPanoramaImageTable if panorama else IndiAllSkyDbImageTable
+        mini_timelapse_files_entries = mini_timelapse_model.query\
+            .join(mini_timelapse_model.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(mini_timelapse_model.createDate >= startDate)\
+            .filter(mini_timelapse_model.createDate <= endDate)\
+            .filter(mini_timelapse_model.exclude == sa_false())\
+            .order_by(
+                mini_timelapse_model.createDate.asc(),
+                mini_timelapse_model.id.asc(),
+            )\
+            .yield_per(100)
+
+
+        timelapse_data = IndiAllSkyDbImageTable.query\
+            .add_columns(
+                func.max(IndiAllSkyDbImageTable.kpindex).label('image_max_kpindex'),
+                func.max(IndiAllSkyDbImageTable.ovation_max).label('image_max_ovation_max'),
+                func.max(IndiAllSkyDbImageTable.smoke_rating).label('image_max_smoke_rating'),
+                func.max(IndiAllSkyDbImageTable.stars).label('image_max_stars'),
+                func.avg(IndiAllSkyDbImageTable.stars).label('image_avg_stars'),
+                func.max(IndiAllSkyDbImageTable.moonphase).label('image_max_moonphase'),
+                func.avg(IndiAllSkyDbImageTable.sqm).label('image_avg_sqm'),
+            )\
+            .join(IndiAllSkyDbImageTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbImageTable.createDate >= startDate)\
+            .filter(IndiAllSkyDbImageTable.createDate <= endDate)\
+            .filter(IndiAllSkyDbImageTable.exclude == sa_false())\
+            .first()
+
+
+        # some of these values might be NULL which might cause other problems
+        try:
+            max_kpindex = float(timelapse_data.image_max_kpindex)
+            max_ovation_max = int(timelapse_data.image_max_ovation_max)
+            max_stars = int(timelapse_data.image_max_stars)
+            avg_stars = float(timelapse_data.image_avg_stars)
+            max_moonphase = float(timelapse_data.image_max_moonphase)
+            avg_sqm = float(timelapse_data.image_avg_sqm)
+        except TypeError:
+            max_kpindex = 0.0
+            max_ovation_max = 0
+            max_stars = 0
+            avg_stars = 0.0
+            max_moonphase = -1.0
+            avg_sqm = 0.0
+
+
+        try:
+            max_smoke_rating = int(timelapse_data.image_max_smoke_rating)
+        except ValueError:
+            max_smoke_rating = constants.SMOKE_RATING_NODATA
+        except TypeError:
+            max_smoke_rating = constants.SMOKE_RATING_NODATA
+
+
+        logger.info('Max kpindex: %0.2f, ovation: %d, smoke rating: %s', max_kpindex, max_ovation_max, constants.SMOKE_RATING_MAP_STR[max_smoke_rating])
+
+
+        timelapse_files = list()
+        frame_alignments = {}
+        panorama_frame_timestamps = list()
+        for entry in mini_timelapse_files_entries:
+            try:
+                p_entry = Path(entry.getFilesystemPath())
+                if not p_entry.stat().st_size:
+                    continue
+            except (OSError, ValueError):
+                logger.error('File not found: %s', entry.filename)
+                continue
+
+            if panorama:
+                # A user-selected crop is in the coordinate system of its anchor.
+                geo = (entry.data or {}).get('panorama_projection') == 'geographic'
+                anchor_geo = (panorama_image_entry.data or {}).get('panorama_projection') == 'geographic'
+                if geo != anchor_geo:
+                    continue
+            if panorama and (entry.width != source_width or entry.height != source_height):
+                message = 'Panorama dimensions changed within the selected time range'
+                logger.error(
+                    '%s: expected %dx%d, found %sx%s',
+                    message,
+                    source_width,
+                    source_height,
+                    entry.width,
+                    entry.height,
+                )
+                task.setFailed(message)
+                return
+
+            timelapse_files.append(p_entry)
+            if not panorama:
+                alignment = frame_geometry(entry.data, (entry.width, entry.height))
+                if alignment:
+                    frame_alignments[p_entry] = alignment
+            if panorama:
+                panorama_frame_timestamps.append(entry.createDate.timestamp())
+
+
+        if frame_alignments:
+            timelapse_files = [p for p in timelapse_files if p in frame_alignments]
+        logger.info('Found %d usable images for mini timelapse', len(timelapse_files))
+
+
+        if len(timelapse_files) < 2:
+            source_label = 'panorama' if panorama else 'all-sky'
+            message = 'Not enough {0:s} images were found to generate a mini timelapse'.format(source_label)
+            logger.error(message)
+            task.setFailed(message)
+            return
+
+
+        if has_crop and pan_mode == 'linear':
+            try:
+                video_filter = buildPanoramaPanFilter(
+                    source_width,
+                    source_height,
+                    crop_x,
+                    crop_y,
+                    end_crop_x,
+                    end_crop_y,
+                    crop_width,
+                    crop_height,
+                    len(timelapse_files),
+                    direction=pan_direction,
+                )
+            except ValueError as e:
+                logger.error('Invalid panorama pan: %s', str(e))
+                task.setFailed('Invalid panorama pan: {0:s}'.format(str(e)))
+                return
+
+
+        mini_video_metadata = {
+            'type'          : constants.MINI_VIDEO,
+            'createDate'    : int(now.timestamp()),
+            'utc_offset'    : now.astimezone().utcoffset().total_seconds(),
+            'dayDate'       : d_dayDate.strftime('%Y%m%d'),
+            'targetDate'    : targetDate.timestamp(),
+            'startDate'     : startDate.timestamp(),
+            'endDate'       : endDate.timestamp(),
+            'night'         : night,
+            'framerate'     : framerate,
+            'frames'        : len(timelapse_files),
+            'note'          : note,
+            'camera_uuid'   : camera.uuid,
+        }
+
+        mini_video_metadata['data'] = {
+            'generation_task_id' : task.id,
+            'generation_task_created' : task.createDate.isoformat(),
+            'max_kpindex'       : max_kpindex,
+            'max_ovation_max'   : max_ovation_max,
+            'max_smoke_rating'  : max_smoke_rating,
+            'max_stars'         : max_stars,
+            'avg_stars'         : avg_stars,
+            'max_moonphase'     : max_moonphase,
+            'avg_sqm'           : avg_sqm,
+        }
+
+        if has_crop:
+            mini_video_metadata['width'] = crop_width
+            mini_video_metadata['height'] = crop_height
+            mini_video_metadata['data'].update({
+                'source'        : 'panorama',
+                'source_width'  : source_width,
+                'source_height' : source_height,
+                'crop_x'        : crop_x,
+                'crop_y'        : crop_y,
+                'crop_width'    : crop_width,
+                'crop_height'   : crop_height,
+                'aspect_ratio'  : aspect_ratio,
+                'pan_mode'      : pan_mode,
+                'end_crop_x'    : end_crop_x,
+                'end_crop_y'    : end_crop_y,
+                'pan_direction' : pan_direction,
+            })
+        elif panorama:
+            mini_video_metadata['data']['source'] = 'panorama'
+
+        # Create DB entry before creating file
+        mini_video_entry = self._miscDb.addMiniVideo(
+            video_file.relative_to(self.image_dir),
+            camera.id,
+            mini_video_metadata,
+        )
+
+
+        mini_video_thumbnail_metadata = {
+            'type'       : constants.THUMBNAIL,
+            'origin'     : constants.MINI_VIDEO,
+            'createDate' : int(now.timestamp()),
+            'dayDate'    : d_dayDate.strftime('%Y%m%d'),
+            'utc_offset' : now.astimezone().utcoffset().total_seconds(),
+            'night'      : night,
+            'camera_uuid': camera.uuid,
+        }
+
+
+        thumbnail_data = None
+        if has_crop:
+            if video_filter:
+                if pan_mode == 'linear':
+                    panorama_image_path = timelapse_files[0]
+                else:
+                    panorama_image_path = Path(thumbnail_image_entry.getFilesystemPath())
+                panorama_image_data = cv2.imread(str(panorama_image_path), cv2.IMREAD_COLOR)
+
+                if panorama_image_data is None:
+                    logger.warning('Unable to read panorama for crop-aware thumbnail: %s', panorama_image_path)
+                else:
+                    try:
+                        thumbnail_data = cropPanoramaArray(
+                            panorama_image_data,
+                            crop_x,
+                            crop_y,
+                            crop_width,
+                            crop_height,
+                        )
+                    except (TypeError, ValueError) as e:
+                        logger.warning('Unable to crop panorama thumbnail: %s', str(e))
+
+
+        mini_video_thumbnail_entry = self._miscDb.addThumbnail(
+            mini_video_entry,
+            mini_video_metadata,
+            camera.id,
+            mini_video_thumbnail_metadata,
+            new_width=self.thumbnail_mini_timelapse_width,
+            opt_height=self.thumbnail_mini_timelapse_height_opt,
+            numpy_data=thumbnail_data,
+            image_entry=thumbnail_image_entry,
+        )
+
+
+        # populate fileSize
+        if mini_video_thumbnail_entry:
+            mini_video_thumbnail_metadata['fileSize'] = mini_video_thumbnail_entry.fileSize
+
+
+        if self.config.get('TIMELAPSE', {}).get('USE_NIGHT_CONFIG', True):
+            bitrate = self.config.get('FFMPEG_BITRATE', '5000k')
+            vf_scale = self.config.get('FFMPEG_VFSCALE', '')
+            ffmpeg_extra_options = self.config.get('FFMPEG_EXTRA_OPTIONS', '')
+        else:
+            if night:
+                bitrate = self.config.get('FFMPEG_BITRATE', '5000k')
+                vf_scale = self.config.get('FFMPEG_VFSCALE', '')
+                ffmpeg_extra_options = self.config.get('FFMPEG_EXTRA_OPTIONS', '')
+            else:
+                bitrate = self.config.get('FFMPEG_BITRATE_DAY', '5000k')
+                vf_scale = self.config.get('FFMPEG_VFSCALE_DAY', '')
+                ffmpeg_extra_options = self.config.get('FFMPEG_EXTRA_OPTIONS_DAY', '')
+
+        if bitrate_override:
+            bitrate = str(bitrate_override)
+
+
+        pan_command_file = None
+        if has_crop and pan_mode == 'linear':
+            try:
+                with tempfile.NamedTemporaryFile(
+                    suffix='_panorama_pan.txt',
+                    delete=False,
+                ) as pan_command_f:
+                    pan_command_file = Path(pan_command_f.name)
+                video_filter = buildPanoramaTimedPanFilter(
+                    source_width,
+                    source_height,
+                    crop_x,
+                    crop_y,
+                    end_crop_x,
+                    end_crop_y,
+                    crop_width,
+                    crop_height,
+                    panorama_frame_timestamps,
+                    framerate,
+                    pan_command_file,
+                    direction=pan_direction,
+                )
+            except (OSError, ValueError) as e:
+                if pan_command_file:
+                    try:
+                        pan_command_file.unlink()
+                    except FileNotFoundError:
+                        pass
+                logger.error('Invalid panorama pan: %s', str(e))
+                task.setFailed('Invalid panorama pan: {0:s}'.format(str(e)))
+                return
+
+        try:
+            mini_tg = TimelapseGenerator(
+                self.config,
+                skip_frames=0,
+            )
+
+            mini_tg.codec = codec
+            mini_tg.framerate = framerate
+            mini_tg.bitrate = bitrate
+            if has_crop:
+                mini_tg.video_filter = video_filter
+            else:
+                mini_tg.vf_scale = vf_scale
+            mini_tg.ffmpeg_extra_options = ffmpeg_extra_options
+
+            mini_tg.pre_processor.frame_alignments = frame_alignments
+            mini_tg.generate(video_file, timelapse_files, preserve_order=True)
+
+
+            try:
+                fileSize = video_file.stat().st_size
+            except FileNotFoundError:
+                fileSize = None
+
+
+            mini_video_entry.fileSize = fileSize
+            mini_video_metadata['fileSize'] = fileSize
+
+
+            mini_video_entry.success = True
+            db.session.commit()
+        except (TimelapseException, OSError):
+            self._miscDb.addNotification(
+                NotificationCategory.MEDIA,
+                'mini_timelapse_video',
+                'Mini timelapse video failed to generate',
+                expire=timedelta(hours=12),
+            )
+
+            task.setFailed('Failed to generate mini timelapse: {0:s}'.format(str(video_file)))
+            return
+        finally:
+            if pan_command_file:
+                try:
+                    pan_command_file.unlink()
+                except FileNotFoundError:
+                    pass
+
+
+        ### Upload ###
+
+
+        if mini_video_thumbnail_entry:
+            self._miscUpload.syncapi_thumbnail(mini_video_thumbnail_entry, mini_video_thumbnail_metadata)  # syncapi before S3
+            self._miscUpload.s3_upload_thumbnail(mini_video_thumbnail_entry, mini_video_thumbnail_metadata)
+
+
+        self._miscUpload.syncapi_mini_video(mini_video_entry, mini_video_metadata)  # syncapi before s3
+        self._miscUpload.s3_upload_mini_video(mini_video_entry, mini_video_metadata)
+        self._miscUpload.upload_mini_video(mini_video_entry)
+        self._miscUpload.youtube_upload_mini_video(mini_video_entry, mini_video_metadata)
+
+
+        task.setSuccess('Generated timelapse (mini_video_id={0:d}): {1:s}'.format(mini_video_entry.id, str(video_file)))
+
+
+    def generatePanoramaMiniVideo(self, task, **kwargs):
+        # Preserve the panorama queue action while sharing the standard worker.
+        self.generateMiniVideo(task, **kwargs)
+
+
+    def generatePanoramaVideo(self, task, **kwargs):
+        timespec = kwargs['timespec']
+        night = bool(kwargs['night'])
+        camera_id = kwargs['camera_id']
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        task.setRunning()
+
+        now = datetime.now()
+
+        try:
+            d_dayDate = datetime.strptime(timespec, '%Y%m%d').date()
+        except ValueError:
+            logger.error('Invalid time spec')
+            task.setFailed('Invalid time spec')
+            return
+
+
+        if night:
+            timeofday = 'night'
+        else:
+            timeofday = 'day'
+
+
+        if self.config['FFMPEG_CODEC'] in ['libx264', 'libx265', 'h264_qsv', 'h264_omx', 'h264_v4l2m2m', 'hevc_v4l2m2m']:
+            video_format = 'mp4'
+        elif self.config['FFMPEG_CODEC'] in ['libvpx']:
+            video_format = 'webm'
+        else:
+            logger.error('Invalid codec in config, timelapse generation failed')
+            task.setFailed('Invalid codec in config, timelapse generation failed')
+            return
+
+        # QSV does not support these large resolutions, fallback to libx264
+        codec = self.config['FFMPEG_CODEC']
+        if codec == 'h264_qsv':
+            codec = 'libx264'
+
+        vid_folder = self._getVideoFolder(d_dayDate, camera)
+
+        video_file = vid_folder.joinpath(
+            'allsky-panorama_timelapse_ccd{0:d}_{1:s}_{2:s}_{3:d}.{4:s}'.format(
+                camera.id,
+                d_dayDate.strftime('%Y%m%d'),
+                timeofday,
+                int(now.timestamp()),
+                video_format,
+            )
+        )
+
+
+        try:
+            # delete old video entry if it exists
+            old_panorama_video_entry = IndiAllSkyDbPanoramaVideoTable.query\
+                .join(IndiAllSkyDbPanoramaVideoTable.camera)\
+                .filter(
+                    and_(
+                        IndiAllSkyDbCameraTable.id == camera.id,
+                        IndiAllSkyDbPanoramaVideoTable.dayDate == d_dayDate,
+                        IndiAllSkyDbPanoramaVideoTable.night == night,
+                    )
+                )\
+                .one()
+
+
+            if not self.config.get('TIMELAPSE_OVERWRITE'):
+                logger.error('Panorama Timelapse already exists, overwrite not permitted')
+                task.setFailed('Panorama Timelapse already exists, overwrite not permitted')
+                return
+
+
+            logger.warning('Removing old panorama video db entry')
+
+            old_panorama_video_entry.deleteAsset()
+
+            db.session.delete(old_panorama_video_entry)
+            db.session.commit()
+        except NoResultFound:
+            pass
+
+
+        if video_file.exists():
+            logger.warning('Removing orphaned panorama video file: %s', video_file)
+            video_file.unlink()
+
+
+        # find all files
+        timelapse_files_entries = IndiAllSkyDbPanoramaImageTable.query\
+            .join(IndiAllSkyDbPanoramaImageTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbPanoramaImageTable.dayDate == d_dayDate)\
+            .filter(IndiAllSkyDbPanoramaImageTable.night == night)\
+            .filter(IndiAllSkyDbPanoramaImageTable.exclude == sa_false())\
+            .order_by(IndiAllSkyDbPanoramaImageTable.createDate.asc())
+
+
+        geographic = timelapse_files_entries.filter(
+            IndiAllSkyDbPanoramaImageTable.data['panorama_projection'].as_string() == 'geographic')
+        if geographic.first() is not None:
+            timelapse_files_entries = geographic
+        timelapse_files_entries_count = timelapse_files_entries.count()
+        logger.info('Found %d images for timelapse', timelapse_files_entries_count)
+
+
+        timelapse_data = IndiAllSkyDbImageTable.query\
+            .add_columns(
+                func.max(IndiAllSkyDbImageTable.kpindex).label('image_max_kpindex'),
+                func.max(IndiAllSkyDbImageTable.ovation_max).label('image_max_ovation_max'),
+                func.max(IndiAllSkyDbImageTable.smoke_rating).label('image_max_smoke_rating'),
+                func.max(IndiAllSkyDbImageTable.stars).label('image_max_stars'),
+                func.avg(IndiAllSkyDbImageTable.stars).label('image_avg_stars'),
+                func.max(IndiAllSkyDbImageTable.moonphase).label('image_max_moonphase'),
+                func.avg(IndiAllSkyDbImageTable.sqm).label('image_avg_sqm'),
+            )\
+            .join(IndiAllSkyDbImageTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbImageTable.dayDate == d_dayDate)\
+            .filter(IndiAllSkyDbImageTable.night == night)\
+            .filter(IndiAllSkyDbImageTable.exclude == sa_false())\
+            .first()
+
+
+        # some of these values might be NULL which might cause other problems
+        try:
+            max_kpindex = float(timelapse_data.image_max_kpindex)
+            max_ovation_max = int(timelapse_data.image_max_ovation_max)
+            max_stars = int(timelapse_data.image_max_stars)
+            avg_stars = float(timelapse_data.image_avg_stars)
+            max_moonphase = float(timelapse_data.image_max_moonphase)
+            avg_sqm = float(timelapse_data.image_avg_sqm)
+        except TypeError:
+            max_kpindex = 0.0
+            max_ovation_max = 0
+            max_stars = 0
+            avg_stars = 0.0
+            max_moonphase = -1.0
+            avg_sqm = 0.0
+
+
+        try:
+            max_smoke_rating = int(timelapse_data.image_max_smoke_rating)
+        except ValueError:
+            max_smoke_rating = constants.SMOKE_RATING_NODATA
+        except TypeError:
+            max_smoke_rating = constants.SMOKE_RATING_NODATA
+
+
+        logger.info('Max kpindex: %0.2f, ovation: %d, smoke rating: %s', max_kpindex, max_ovation_max, constants.SMOKE_RATING_MAP_STR[max_smoke_rating])
+
+
+        timelapse_files = list()
+        for entry in timelapse_files_entries:
+            p_entry = Path(entry.getFilesystemPath())
+
+            if not p_entry.exists():
+                logger.error('File not found: %s', p_entry)
+                continue
+
+            if p_entry.stat().st_size == 0:
+                continue
+
+            timelapse_files.append(p_entry)
+
+
+        timelapse_skip_frames = self.config.get('TIMELAPSE_SKIP_FRAMES', 4)
+
+        video_metadata = {
+            'type'          : constants.PANORAMA_VIDEO,
+            'createDate'    : int(now.timestamp()),
+            'utc_offset'    : now.astimezone().utcoffset().total_seconds(),
+            'dayDate'       : d_dayDate.strftime('%Y%m%d'),
+            'night'         : night,
+            'framerate'     : self.config['FFMPEG_FRAMERATE'],
+            'frames'        : timelapse_files_entries_count - timelapse_skip_frames,
+            'camera_uuid'   : camera.uuid,
+        }
+
+        video_metadata['data'] = {
+            'max_kpindex'       : max_kpindex,
+            'max_ovation_max'   : max_ovation_max,
+            'max_smoke_rating'  : max_smoke_rating,
+            'max_stars'         : max_stars,
+            'avg_stars'         : avg_stars,
+            'max_moonphase'     : max_moonphase,
+            'avg_sqm'           : avg_sqm,
+        }
+
+
+        # Create DB entry before creating file
+        video_entry = self._miscDb.addPanoramaVideo(
+            video_file.relative_to(self.image_dir),
+            camera.id,
+            video_metadata,
+        )
+
+
+        if self.config.get('TIMELAPSE', {}).get('USE_NIGHT_CONFIG', True):
+            framerate = self.config.get('FFMPEG_FRAMERATE', 25)
+            bitrate = self.config.get('FFMPEG_BITRATE', '5000k')
+            ffmpeg_extra_options = self.config.get('FFMPEG_EXTRA_OPTIONS', '')
+        else:
+            if night:
+                framerate = self.config.get('FFMPEG_FRAMERATE', 25)
+                bitrate = self.config.get('FFMPEG_BITRATE', '5000k')
+                ffmpeg_extra_options = self.config.get('FFMPEG_EXTRA_OPTIONS', '')
+            else:
+                framerate = self.config.get('FFMPEG_FRAMERATE_DAY', '25')
+                bitrate = self.config.get('FFMPEG_BITRATE_DAY', '5000k')
+                ffmpeg_extra_options = self.config.get('FFMPEG_EXTRA_OPTIONS_DAY', '')
+
+
+        try:
+            panorama_tg = TimelapseGenerator(
+                self.config,
+                skip_frames=timelapse_skip_frames,
+            )
+
+            panorama_tg.codec = codec
+            panorama_tg.framerate = framerate
+            panorama_tg.bitrate = bitrate
+            #panorama_tg.vf_scale = vf_scale  # no vfscale for panorama timelapse
+            panorama_tg.ffmpeg_extra_options = ffmpeg_extra_options
+
+            panorama_tg.generate(video_file, timelapse_files)
+
+
+            try:
+                fileSize = video_file.stat().st_size
+            except FileNotFoundError:
+                fileSize = None
+
+
+            video_entry.fileSize = fileSize
+            video_metadata['fileSize'] = fileSize
+
+
+            video_entry.success = True
+            db.session.commit()
+        except TimelapseException:
+            self._miscDb.addNotification(
+                NotificationCategory.MEDIA,
+                'timelapse_video',
+                'Timelapse panorama video failed to generate',
+                expire=timedelta(hours=12),
+            )
+
+            task.setFailed('Failed to generate timelapse: {0:s}'.format(str(video_file)))
+            return
+
+
+        task.setSuccess('Generated timelapse (mini_video_id={0:d}): {1:s}'.format(mini_video_entry.id, str(video_file)))
+
+        ### Upload ###
+        self._miscUpload.syncapi_panorama_video(video_entry, video_metadata)  # syncapi before S3
+        self._miscUpload.s3_upload_panorama_video(video_entry, video_metadata)
+        self._miscUpload.upload_panorama_video(video_entry)
+        self._miscUpload.youtube_upload_panorama_video(video_entry, video_metadata)
+
+
+    def generateKeogramStarTrails(self, task, **kwargs):
+        timespec = kwargs['timespec']
+        night = bool(kwargs['night'])
+        camera_id = kwargs['camera_id']
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        detection_mask_dict = self._load_detection_mask()
+
+
+        task.setRunning()
+
+        now = datetime.now()
+
+        try:
+            d_dayDate = datetime.strptime(timespec, '%Y%m%d').date()
+        except ValueError:
+            logger.error('Invalid time spec')
+            task.setFailed('Invalid time spec')
+            return
+
+
+        if night:
+            timeofday = 'night'
+        else:
+            timeofday = 'day'
+
+
+        if self.config['FFMPEG_CODEC'] in ['libx264', 'libx265', 'h264_qsv', 'h264_omx', 'h264_v4l2m2m', 'hevc_v4l2m2m']:
+            video_format = 'mp4'
+        elif self.config['FFMPEG_CODEC'] in ['libvpx']:
+            video_format = 'webm'
+        else:
+            logger.error('Invalid codec in config, timelapse generation failed')
+            task.setFailed('Invalid codec in config, timelapse generation failed')
+            return
+
+
+        vid_folder = self._getVideoFolder(d_dayDate, camera)
+
+        keogram_file = vid_folder.joinpath(
+            'allsky-keogram_ccd{0:d}_{1:s}_{2:s}_{3:d}.{4:s}'.format(
+                camera.id,
+                d_dayDate.strftime('%Y%m%d'),
+                timeofday,
+                int(now.timestamp()),
+                self.config['IMAGE_FILE_TYPE'],
+            )
+        )
+
+        startrail_file = vid_folder.joinpath(
+            'allsky-startrail_ccd{0:d}_{1:s}_{2:s}_{3:d}.{4:s}'.format(
+                camera.id,
+                d_dayDate.strftime('%Y%m%d'),
+                timeofday,
+                int(now.timestamp()),
+                self.config['IMAGE_FILE_TYPE'],
+            )
+        )
+
+        startrail_video_file = vid_folder.joinpath(
+            'allsky-startrail_timelapse_ccd{0:d}_{1:s}_{2:s}_{3:d}.{4:s}'.format(
+                camera.id,
+                d_dayDate.strftime('%Y%m%d'),
+                timeofday,
+                int(now.timestamp()),
+                video_format,
+            )
+        )
+
+
+        # find all files
+        files_entries = IndiAllSkyDbImageTable.query\
+            .join(IndiAllSkyDbImageTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbImageTable.dayDate == d_dayDate)\
+            .filter(IndiAllSkyDbImageTable.night == night)\
+            .filter(IndiAllSkyDbImageTable.exclude == sa_false())\
+            .order_by(IndiAllSkyDbImageTable.createDate.asc())
+
+
+        files_entries, image_count = stack_entries(files_entries, IndiAllSkyDbImageTable)
+        if image_count <= self.config.get('TIMELAPSE_SKIP_FRAMES', 4):
+            task.setFailed('Insufficient oriented source images for keogram and star trails')
+            return
+        logger.info('Found %d images for keogram/star trails', image_count)
+
+
+        try:
+            # delete old keogram entry if it exists
+            old_keogram_entry = IndiAllSkyDbKeogramTable.query\
+                .join(IndiAllSkyDbKeogramTable.camera)\
+                .filter(
+                    and_(
+                        IndiAllSkyDbCameraTable.id == camera.id,
+                        IndiAllSkyDbKeogramTable.dayDate == d_dayDate,
+                        IndiAllSkyDbKeogramTable.night == night,
+                    )
+                )\
+                .one()
+
+
+            if not self.config.get('TIMELAPSE_OVERWRITE'):
+                logger.error('Keogram already exists, overwrite not permitted')
+                task.setFailed('Keogram already exists, overwrite not permitted')
+                return
+
+
+            logger.warning('Removing old keogram db entry')
+
+            old_keogram_entry.deleteAsset()
+
+            db.session.delete(old_keogram_entry)
+            db.session.commit()
+        except NoResultFound:
+            pass
+
+
+        try:
+            # delete old star trail entry if it exists
+            old_startrail_entry = IndiAllSkyDbStarTrailsTable.query\
+                .join(IndiAllSkyDbStarTrailsTable.camera)\
+                .filter(
+                    and_(
+                        IndiAllSkyDbCameraTable.id == camera.id,
+                        IndiAllSkyDbStarTrailsTable.dayDate == d_dayDate,
+                        IndiAllSkyDbStarTrailsTable.night == night,
+                    )
+                )\
+                .one()
+
+
+            if not self.config.get('TIMELAPSE_OVERWRITE'):
+                logger.error('Star trail already exists, overwrite not permitted')
+                task.setFailed('Star trail already exists, overwrite not permitted')
+                return
+
+
+            logger.warning('Removing old star trail db entry')
+
+            old_startrail_entry.deleteAsset()
+
+            db.session.delete(old_startrail_entry)
+            db.session.commit()
+        except NoResultFound:
+            pass
+
+
+        try:
+            # delete old star trail video entry if it exists
+            old_startrail_video_entry = IndiAllSkyDbStarTrailsVideoTable.query\
+                .join(IndiAllSkyDbStarTrailsVideoTable.camera)\
+                .filter(
+                    and_(
+                        IndiAllSkyDbCameraTable.id == camera.id,
+                        IndiAllSkyDbStarTrailsVideoTable.dayDate == d_dayDate,
+                        IndiAllSkyDbStarTrailsVideoTable.night == night,
+                    )
+                )\
+                .one()
+
+
+            if not self.config.get('TIMELAPSE_OVERWRITE'):
+                logger.error('Star trail timelapse already exists, overwrite not permitted')
+                task.setFailed('Star trail timelapse already exists, overwrite not permitted')
+                return
+
+
+            logger.warning('Removing old star trail video db entry')
+
+            old_startrail_video_entry.deleteAsset()
+
+            db.session.delete(old_startrail_video_entry)
+            db.session.commit()
+        except NoResultFound:
+            pass
+
+
+        if keogram_file.exists():
+            logger.warning('Removing orphaned keogram file: %s', keogram_file)
+            keogram_file.unlink()
+
+        if startrail_file.exists():
+            logger.warning('Removing orphanded Star trail file: %s', startrail_file)
+            startrail_file.unlink()
+
+        if startrail_video_file.exists():
+            logger.warning('Removin orphaned Star trail timelapse file: %s', startrail_video_file)
+            startrail_video_file.unlink()
+
+
+        # some of these values might be NULL which might cause other problems
+        image_data = IndiAllSkyDbImageTable.query\
+            .add_columns(
+                func.max(IndiAllSkyDbImageTable.kpindex).label('image_max_kpindex'),
+                func.max(IndiAllSkyDbImageTable.ovation_max).label('image_max_ovation_max'),
+                func.max(IndiAllSkyDbImageTable.smoke_rating).label('image_max_smoke_rating'),
+                func.max(IndiAllSkyDbImageTable.stars).label('image_max_stars'),
+                func.avg(IndiAllSkyDbImageTable.stars).label('image_avg_stars'),
+                func.max(IndiAllSkyDbImageTable.moonphase).label('image_max_moonphase'),
+                func.avg(IndiAllSkyDbImageTable.sqm).label('image_avg_sqm'),
+            )\
+            .join(IndiAllSkyDbImageTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbImageTable.dayDate == d_dayDate)\
+            .filter(IndiAllSkyDbImageTable.night == night)\
+            .filter(IndiAllSkyDbImageTable.exclude == sa_false())\
+            .first()
+
+
+        # some of these values might be NULL which might cause other problems
+        try:
+            max_kpindex = float(image_data.image_max_kpindex)
+            max_ovation_max = int(image_data.image_max_ovation_max)
+            max_stars = int(image_data.image_max_stars)
+            avg_stars = float(image_data.image_avg_stars)
+            max_moonphase = float(image_data.image_max_moonphase)
+            avg_sqm = float(image_data.image_avg_sqm)
+        except TypeError:
+            max_kpindex = 0.0
+            max_ovation_max = 0
+            max_stars = 0
+            avg_stars = 0.0
+            max_moonphase = -1.0
+            avg_sqm = 0.0
+
+
+        try:
+            max_smoke_rating = int(image_data.image_max_smoke_rating)
+        except ValueError:
+            max_smoke_rating = constants.SMOKE_RATING_NODATA
+        except TypeError:
+            max_smoke_rating = constants.SMOKE_RATING_NODATA
+
+
+        logger.info('Max kpindex: %0.2f, ovation: %d, smoke rating: %s', max_kpindex, max_ovation_max, constants.SMOKE_RATING_MAP_STR[max_smoke_rating])
+
+
+        timelapse_skip_frames = self.config.get('TIMELAPSE_SKIP_FRAMES', 4)
+
+
+        processing_start = time.time()
+
+        kg = KeogramGenerator(
+            self.config,
+            skip_frames=timelapse_skip_frames,
+        )
+        kg.angle = self.config.get('KEOGRAM_ANGLE', 0.0)
+        kg.h_scale_factor = self.config.get('KEOGRAM_H_SCALE', 100)
+        kg.v_scale_factor = self.config.get('KEOGRAM_V_SCALE', 33)
+        kg.crop_top = self.config.get('KEOGRAM_CROP_TOP', 0)
+        kg.crop_bottom = self.config.get('KEOGRAM_CROP_BOTTOM', 0)
+        kg.label = self.config.get('KEOGRAM_LABEL', True)
+
+
+        keogram_metadata = {
+            'type'       : constants.KEOGRAM,
+            'createDate' : int(now.timestamp()),
+            'utc_offset' : now.astimezone().utcoffset().total_seconds(),
+            'dayDate'    : d_dayDate.strftime('%Y%m%d'),
+            'night'      : night,
+            'camera_uuid': camera.uuid,
+            #'height'  # added later
+            #'width'   # added later
+            #'frames'  # added later
+        }
+
+        keogram_metadata['data'] = {
+            'max_kpindex'       : max_kpindex,
+            'max_ovation_max'   : max_ovation_max,
+            'max_smoke_rating'  : max_smoke_rating,
+            'max_stars'         : max_stars,
+            'avg_stars'         : avg_stars,
+            'max_moonphase'     : max_moonphase,
+            'avg_sqm'           : avg_sqm,
+        }
+
+
+        startrail_metadata = {
+            'type'       : constants.STARTRAIL,
+            'createDate' : int(now.timestamp()),
+            'utc_offset' : now.astimezone().utcoffset().total_seconds(),
+            'dayDate'    : d_dayDate.strftime('%Y%m%d'),
+            'night'      : night,
+            'camera_uuid': camera.uuid,
+            #'height'  # added later
+            #'width'   # added later
+            #'frames'  # added later
+        }
+
+        startrail_metadata['data'] = {
+            'max_kpindex'       : max_kpindex,
+            'max_ovation_max'   : max_ovation_max,
+            'max_smoke_rating'  : max_smoke_rating,
+            'max_stars'         : max_stars,
+            'avg_stars'         : avg_stars,
+            'max_moonphase'     : max_moonphase,
+            'avg_sqm'           : avg_sqm,
+        }
+
+
+        startrail_video_metadata = {
+            'type'       : constants.STARTRAIL_VIDEO,
+            'createDate' : int(now.timestamp()),
+            'utc_offset' : now.astimezone().utcoffset().total_seconds(),
+            'dayDate'    : d_dayDate.strftime('%Y%m%d'),
+            'night'      : night,
+            'camera_uuid': camera.uuid,
+            'framerate'  : self.config['FFMPEG_FRAMERATE'],
+            #'frames'  # added later
+        }
+
+        startrail_video_metadata['data'] = {
+            'max_kpindex'       : max_kpindex,
+            'max_ovation_max'   : max_ovation_max,
+            'max_smoke_rating'  : max_smoke_rating,
+            'max_stars'         : max_stars,
+            'avg_stars'         : avg_stars,
+            'max_moonphase'     : max_moonphase,
+            'max_sqm'           : avg_sqm,
+        }
+
+
+        # Add DB entries before creating files
+        keogram_entry = self._miscDb.addKeogram(
+            keogram_file.relative_to(self.image_dir),
+            camera.id,
+            keogram_metadata,
+            broadcast=False,  # keogram_complete is sent once the file is written
+        )
+
+
+        if night:
+            startrail_entry = self._miscDb.addStarTrail(
+                startrail_file.relative_to(self.image_dir),
+                camera.id,
+                startrail_metadata,
+                broadcast=False,  # startrail_complete is sent once the file is written
+            )
+        else:
+            startrail_entry = None
+            startrail_video_entry = None
+
+
+        stg = StarTrailGenerator(
+            self.config,
+            skip_frames=timelapse_skip_frames,
+            mask=detection_mask_dict,
+        )
+        stg.max_adu = self.config['STARTRAILS_MAX_ADU']
+        stg.mask_threshold = self.config['STARTRAILS_MASK_THOLD']
+        stg.pixel_cutoff_threshold = self.config['STARTRAILS_PIXEL_THOLD']
+        stg.min_stars = self.config.get('STARTRAILS_MIN_STARS', 0)
+        stg.latitude = camera.latitude
+        stg.longitude = camera.longitude
+        stg.sun_alt_threshold = self.config['STARTRAILS_SUN_ALT_THOLD']
+
+        if self.config['STARTRAILS_MOONMODE_THOLD']:
+            stg.moonmode_alt = self.config['NIGHT_MOONMODE_ALT_DEG']
+            stg.moonmode_phase = self.config['NIGHT_MOONMODE_PHASE']
+        else:
+            stg.moon_alt_threshold = self.config['STARTRAILS_MOON_ALT_THOLD']
+            stg.moon_phase_threshold = self.config['STARTRAILS_MOON_PHASE_THOLD']
+
+        if self.config.get('STARTRAILS_USE_DB_DATA', True):
+            logger.warning('Re-using image data for ADU and Star counts')
+        else:
+            logger.warning('Recalculating values for ADU and Star counts')
+
+
+        remap = SkyRemap()
+        # Files are presorted from the DB
+        for i, entry in enumerate(files_entries):
+            if i % 50 == 0:
+                processing_elapsed_s = time.time() - processing_start
+                logger.info('Processed %d of %d images (%0.2f images/s)', i, image_count, (i + 1) / processing_elapsed_s)
+
+            image_file_p = Path(entry.getFilesystemPath())
+
+            if not image_file_p.exists():
+                logger.error('File not found: %s', image_file_p)
+                continue
+
+            if image_file_p.stat().st_size == 0:
+                continue
+
+
+            #logger.info('Reading file: %s', p_entry)
+            if image_file_p.suffix in ('.jpg', '.jpeg'):
+                import simplejpeg
+
+                try:
+                    with io.open(str(image_file_p), 'rb') as f_img:
+                        image_data = simplejpeg.decode_jpeg(f_img.read(), colorspace='BGR')
+                except ValueError as e:
+                    logger.error('Unable to read image - %s: %s', str(e), image_file_p)
+                    continue
+            elif image_file_p.suffix in ('.png',):
+                # opencv is faster than Pillow with PNG
+                image_data = cv2.imread(str(image_file_p), cv2.IMREAD_COLOR)
+
+                if isinstance(image_data, type(None)):
+                    logger.error('Unable to read %s', image_file_p)
+                    continue
+
+            else:
+                # Pillow supports remaining image types
+                import numpy
+                import PIL
+                from PIL import Image
+
+                try:
+                    with Image.open(str(image_file_p)) as img_pil:
+                        image_data = cv2.cvtColor(numpy.array(img_pil), cv2.COLOR_RGB2BGR)
+                except PIL.UnidentifiedImageError:
+                    logger.error('Unable to read image: %s', image_file_p)
+                    continue
+
+
+            process_stack_frame(entry, image_file_p, image_data, remap, kg, stg if night else None,
+                                self.config.get('STARTRAILS_USE_DB_DATA', True))
+
+
+        kg.finalize(keogram_file, camera)
+
+
+        # add height and width
+        keogram_height, keogram_width = kg.shape[:2]
+        keogram_metadata['height'] = keogram_height
+        keogram_metadata['width'] = keogram_width
+        keogram_metadata['frames'] = keogram_width  # one frame per line
+
+        keogram_entry.height = keogram_height
+        keogram_entry.width = keogram_width
+        keogram_entry.frames = keogram_width  # one frame per line
+
+
+        try:
+            k_fileSize = keogram_file.stat().st_size
+        except FileNotFoundError:
+            k_fileSize = None
+
+
+        keogram_entry.fileSize = k_fileSize
+        keogram_metadata['fileSize'] = k_fileSize
+
+
+        keogram_entry.success = True
+        db.session.commit()
+
+
+        keogram_thumbnail_metadata = {
+            'type'       : constants.THUMBNAIL,
+            'origin'     : constants.KEOGRAM,
+            'createDate' : int(now.timestamp()),
+            'dayDate'    : d_dayDate.strftime('%Y%m%d'),
+            'utc_offset' : now.astimezone().utcoffset().total_seconds(),
+            'night'      : night,
+            'camera_uuid': camera.uuid,
+        }
+
+        keogram_thumbnail_entry = self._miscDb.addThumbnail(
+            keogram_entry,
+            keogram_metadata,
+            camera.id,
+            keogram_thumbnail_metadata,
+            new_width=self.thumbnail_keogram_width,
+            opt_height=self.thumbnail_keogram_height_opt,
+        )
+
+
+        # populate fileSize
+        keogram_thumbnail_metadata['fileSize'] = keogram_thumbnail_entry.fileSize
+
+
+        if night:
+            stg.finalize(startrail_file, camera)
+
+
+            # add height and width
+            st_height, st_width = stg.shape[:2]
+            startrail_metadata['height'] = st_height
+            startrail_metadata['width'] = st_width
+            startrail_metadata['frames'] = stg.trail_count
+
+            startrail_entry.height = st_height
+            startrail_entry.width = st_width
+            startrail_entry.frames = stg.trail_count
+
+
+            try:
+                st_fileSize = startrail_file.stat().st_size
+            except FileNotFoundError:
+                st_fileSize = None
+
+
+            startrail_entry.fileSize = st_fileSize
+            startrail_metadata['fileSize'] = st_fileSize
+
+
+            startrail_entry.success = True
+            db.session.commit()
+
+
+            startrail_thumbnail_metadata = {
+                'type'       : constants.THUMBNAIL,
+                'origin'     : constants.STARTRAIL,
+                'createDate' : int(now.timestamp()),
+                'dayDate'    : d_dayDate.strftime('%Y%m%d'),
+                'utc_offset' : now.astimezone().utcoffset().total_seconds(),
+                'night'      : night,
+                'camera_uuid': camera.uuid,
+            }
+
+            startrail_thumbnail_entry = self._miscDb.addThumbnail(
+                startrail_entry,
+                startrail_metadata,
+                camera.id,
+                startrail_thumbnail_metadata,
+                new_width=self.thumbnail_startrail_width,
+                opt_height=self.thumbnail_startrail_height_opt,
+            )
+
+
+            # populate fileSize
+            startrail_thumbnail_metadata['fileSize'] = startrail_thumbnail_entry.fileSize
+
+
+            st_frame_count = stg.timelapse_frame_count
+            if st_frame_count >= self.config.get('STARTRAILS_TIMELAPSE_MINFRAMES', 250):
+                startrail_video_metadata['frames'] = st_frame_count  # add frame count
+
+                startrail_video_entry = self._miscDb.addStarTrailVideo(
+                    startrail_video_file.relative_to(self.image_dir),
+                    camera.id,
+                    startrail_video_metadata,
+                )
+
+
+                # Star Trails only generated at night
+                framerate = self.config.get('FFMPEG_FRAMERATE', 25)
+                bitrate = self.config.get('FFMPEG_BITRATE', '5000k')
+                vf_scale = self.config.get('FFMPEG_VFSCALE_STARTRAIL', '')
+                ffmpeg_extra_options = self.config.get('FFMPEG_EXTRA_OPTIONS', '')
+
+
+                try:
+                    st_tg = TimelapseGenerator(
+                        self.config,
+                        skip_frames=0,
+                    )
+
+                    st_tg.codec = self.config['FFMPEG_CODEC']
+                    st_tg.framerate = framerate
+                    st_tg.bitrate = bitrate
+                    st_tg.vf_scale = vf_scale
+                    st_tg.ffmpeg_extra_options = ffmpeg_extra_options
+
+                    st_tg.generate(startrail_video_file, stg.timelapse_frame_list)
+
+
+                    try:
+                        stv_fileSize = startrail_video_file.stat().st_size
+                    except FileNotFoundError:
+                        stv_fileSize = None
+
+
+                    startrail_video_entry.fileSize = stv_fileSize
+                    startrail_video_metadata['fileSize'] = stv_fileSize
+
+
+                    startrail_video_entry.success = True
+                    db.session.commit()
+                except TimelapseException:
+                    logger.error('Failed to generate startrails timelapse')
+
+                    self._miscDb.addNotification(
+                        NotificationCategory.MEDIA,
+                        'startrail_video',
+                        'Startrails timelapse video failed to generate',
+                        expire=timedelta(hours=12),
+                    )
+            else:
+                logger.error('Not enough frames to generate star trails timelapse: %d', st_frame_count)
+                startrail_video_entry = None
+
+
+        processing_elapsed_s = time.time() - processing_start
+        logger.warning('Total keogram/star trail processing in %0.1f s', processing_elapsed_s)
+
+
+        if keogram_entry:
+            # upload thumbnail first
+            if keogram_thumbnail_entry:
+                self._miscUpload.syncapi_thumbnail(keogram_thumbnail_entry, keogram_thumbnail_metadata)  # syncapi before S3
+                self._miscUpload.s3_upload_thumbnail(keogram_thumbnail_entry, keogram_thumbnail_metadata)
+
+
+            if keogram_file.exists():
+                # the keogram is written and marked successful; announce it before the uploads
+                broadcast_media_complete('keogram_complete', keogram_entry)
+
+                self._miscUpload.s3_upload_keogram(keogram_entry, keogram_metadata)
+                self._miscUpload.syncapi_keogram(keogram_entry, keogram_metadata)
+                self._miscUpload.upload_keogram(keogram_entry)
+            else:
+                keogram_entry.success = False
+                db.session.commit()
+
+
+        if startrail_entry and night:
+            # upload thumbnail first
+            if startrail_thumbnail_entry:
+                self._miscUpload.syncapi_thumbnail(startrail_thumbnail_entry, startrail_thumbnail_metadata)  # syncapi before S3
+                self._miscUpload.s3_upload_thumbnail(startrail_thumbnail_entry, startrail_thumbnail_metadata)
+
+
+            if startrail_file.exists():
+                # the star trail image is written and marked successful; announce it before the uploads
+                broadcast_media_complete('startrail_complete', startrail_entry)
+
+                self._miscUpload.syncapi_startrail(startrail_entry, startrail_metadata)  # syncapi before S3
+                self._miscUpload.s3_upload_startrail(startrail_entry, startrail_metadata)
+                self._miscUpload.upload_startrail(startrail_entry)
+            else:
+                startrail_entry.success = False
+                db.session.commit()
+
+
+        if startrail_video_entry and night:
+            if startrail_video_file.exists():
+                self._miscUpload.syncapi_startrail_video(startrail_video_entry, startrail_video_metadata)  # syncapi before S3
+                self._miscUpload.s3_upload_startrail_video(startrail_video_entry, startrail_video_metadata)
+                self._miscUpload.upload_startrail_video(startrail_video_entry)
+                self._miscUpload.youtube_upload_startrail_video(startrail_video_entry, startrail_video_metadata)
+            else:
+                # success flag set above
+                pass
+
+
+        task.setSuccess('Generated keogram and/or star trail')
+
+
+    def uploadAllskyEndOfNight(self, task, **kwargs):
+        night = bool(kwargs['night'])
+        camera_id = kwargs['camera_id']
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        task.setRunning()
+
+        if not night:
+            # Only upload at end of night
+            return
+
+        if not self.config.get('FILETRANSFER', {}).get('UPLOAD_ENDOFNIGHT'):
+            logger.warning('End of Night uploading disabled')
+            task.setFailed('End of Night uploading disabled')
+            return
+
+        if not self.config.get('FILETRANSFER', {}).get('REMOTE_ENDOFNIGHT_FOLDER'):
+            logger.error('End of Night folder not configured')
+            task.setFailed('End of Night folder not configured')
+            return
+
+
+        logger.info('Generating Allsky EndOfNight data.json')
+
+        utcnow = datetime.now(tz=timezone.utc)  # ephem expects UTC dates
+
+        obs = ephem.Observer()
+        obs.lon = math.radians(camera.longitude)
+        obs.lat = math.radians(camera.latitude)
+        obs.elevation = camera.elevation
+
+        # disable atmospheric refraction calcs
+        obs.pressure = 0
+
+        sun = ephem.Sun()
+
+        obs.date = utcnow
+        sun.compute(obs)
+
+
+        try:
+            if math.degrees(sun.alt) < 0:
+                sun_civilDawn_date = obs.next_rising(sun).datetime()
+            else:
+                sun_civilDawn_date = obs.previous_rising(sun).datetime()
+        except ephem.NeverUpError:
+            # northern hemisphere
+            sun_civilDawn_date = utcnow + timedelta(years=10)
+        except ephem.AlwaysUpError:
+            # southern hemisphere
+            sun_civilDawn_date = utcnow - timedelta(days=1)
+
+
+        try:
+            sun_civilTwilight_date = obs.next_setting(sun).datetime()
+        except ephem.AlwaysUpError:
+            # northern hemisphere
+            sun_civilTwilight_date = utcnow - timedelta(days=1)
+        except ephem.NeverUpError:
+            # southern hemisphere
+            sun_civilTwilight_date = utcnow + timedelta(years=10)
+
+
+        data = {
+            'sunrise'            : sun_civilDawn_date.replace(tzinfo=timezone.utc).isoformat(),
+            'sunset'             : sun_civilTwilight_date.replace(tzinfo=timezone.utc).isoformat(),
+            'streamDaytime'      : bool(self.config['DAYTIME_CAPTURE']),
+        }
+
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as data_tempfile_f:
+            json.dump(
+                data,
+                data_tempfile_f,
+                indent=4,
+                ensure_ascii=False,
+            )
+
+            data_json_p = Path(data_tempfile_f.name)
+
+
+        now = datetime.now()
+
+        # Parameters for string formatting
+        file_data_dict = {
+            'timestamp'    : now,
+            'ts'           : now,  # shortcut
+            'camera_uuid'  : camera.uuid,
+        }
+
+
+        # Replace parameters in names
+        remote_dir = self.config['FILETRANSFER']['REMOTE_ENDOFNIGHT_FOLDER'].format(**file_data_dict)
+
+        remote_file_p = Path(remote_dir).joinpath('data.json')
+
+
+        jobdata = {
+            'action'         : constants.TRANSFER_UPLOAD,
+            'local_file'     : str(data_json_p),
+            'remote_file'    : str(remote_file_p),
+            'remove_local'   : True,
+        }
+
+        upload_task = IndiAllSkyDbTaskQueueTable(
+            queue=TaskQueueQueue.UPLOAD,
+            state=TaskQueueState.QUEUED,
+            data=jobdata,
+        )
+        db.session.add(upload_task)
+        db.session.commit()
+
+        self.upload_q.put({'task_id' : upload_task.id})
+
+        task.setSuccess('Uploaded EndOfNight data')
+
+
+    def systemHealthCheck(self, task, **kwargs):
+        task.setRunning()
+
+
+        disk_usage_warning = self.config.get('HEALTHCHECK', {}).get('DISK_USAGE', 90.0)
+        swap_usage_warning = self.config.get('HEALTHCHECK', {}).get('SWAP_USAGE', 90.0)
+
+
+        # check filesystems
+        logger.info('Performing system health check')
+
+        fs_list = psutil.disk_partitions(all=False)
+
+        for fs in fs_list:
+
+            skip = False
+            for p in ('/snap', '/boot'):
+                if fs.mountpoint.startswith(p + '/'):
+                    skip = True
+                    break
+                elif fs.mountpoint == p:
+                    skip = True
+                    break
+
+            if skip:
+                continue
+
+
+            try:
+                disk_usage = psutil.disk_usage(fs.mountpoint)
+            except PermissionError as e:
+                logger.error('PermissionError: %s', str(e))
+                continue
+
+            if disk_usage.percent >= disk_usage_warning:
+                self._miscDb.addNotification(
+                    NotificationCategory.DISK,
+                    fs.mountpoint,
+                    'Filesystem {0:s} >={1:0.1f}% full'.format(fs.mountpoint, disk_usage_warning),
+                    expire=timedelta(minutes=715),  # should run every ~12 hours
+                )
+
+
+        # check swap capacity
+        swap_info = psutil.swap_memory()
+        if swap_info.percent >= swap_usage_warning:
+            self._miscDb.addNotification(
+                NotificationCategory.MISC,
+                'swap',
+                'Swap memory >={0:0.1f}% full'.format(swap_usage_warning),
+                expire=timedelta(minutes=715),  # should run every ~12 hours
+            )
+
+        task.setSuccess('Health check complete')
+
+
+    def updateAuroraData(self, task, **kwargs):
+        camera_id = kwargs['camera_id']
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        task.setRunning()
+
+        aurora = IndiAllskyAuroraUpdate(self.config)
+        aurora.update(camera)
+
+        task.setSuccess('Aurora data updated')
+
+
+    def updateSmokeData(self, task, **kwargs):
+        camera_id = kwargs['camera_id']
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        task.setRunning()
+
+        if not self.config.get('SMOKE_ENABLE', True):
+            task.setSuccess('Smoke data disabled')
+            return
+
+        smoke = IndiAllskySmokeUpdate(self.config)
+        smoke.update(camera)
+
+        task.setSuccess('Smoke data updated')
+
+
+    def updateSatelliteTleData(self, task, **kwargs):
+        task.setRunning()
+
+        satellite = IndiAllskyUpdateSatelliteData(self.config)
+        success = satellite.update()
+
+        if success:
+            task.setSuccess('Satellite data updated')
+        else:
+            task.setFailed('Satellite data update deferred or failed')
+
+
+    def backupDatabase(self, task, **kwargs):
+        if db.engine.dialect.name != 'sqlite':
+            logger.error('Only sqlite backups are supported')
+            task.setFailed('Only sqlite backups are supported')
+            return
+
+
+        task.setRunning()
+
+
+        backup_start = time.time()
+
+        backup = IndiAllskyDatabaseBackup(self.config)
+
+
+        try:
+            backup_file = backup.db_backup()
+        except BackupFailure as e:
+            logger.error('Backup compress failed: %s', str(e))
+
+            self._miscDb.addNotification(
+                NotificationCategory.GENERAL,
+                'db_backup_failure',
+                'Database backup failed: {0:s}'.format(str(e)),
+                expire=timedelta(minutes=1400),
+            )
+
+            task.setFailed('Backup failed failed: {0:s}'.format(str(e)))
+            return
+
+
+        backup_elapsed_s = time.time() - backup_start
+        logger.info('Backup completed in %0.2fs', backup_elapsed_s)
+
+
+        task.setSuccess('Backup complete')
+
+
+        ### Upload ###
+        self._miscUpload.upload_db_backup(backup_file)
+
+
+    def sendAllskyMapPing(self, task, **kwargs):
+        task.setRunning()
+
+        from .allsky_map import send_allsky_map_ping
+        from .flask.models import NotificationCategory
+
+        def db_notify(category, name, message, expire):
+            self._miscDb.addNotification(category, name, message, expire=expire)
+
+        success, msg = send_allsky_map_ping(self.config, logger, db_notify)
+
+        if success:
+            task.setSuccess(f'Allsky Map Ping successful: {msg}')
+            self._miscDb.clearNotification(NotificationCategory.STATE, 'allskymap_auth_error')
+        else:
+            task.setFailed(f'Allsky Map Ping failed: {msg}')
+
+
+    def expireData(self, task, **kwargs):
+        camera_id = kwargs['camera_id']
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        task.setRunning()
+
+
+        now = datetime.now()
+
+        # Old image files need to be pruned
+        cutoff_age_images = now - timedelta(days=self.config.get('IMAGE_EXPIRE_DAYS', 10))
+        cutoff_age_images_date = cutoff_age_images.date()  # cutoff date based on dayDate attribute, not createDate
+
+        old_images = IndiAllSkyDbImageTable.query\
+            .join(IndiAllSkyDbImageTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbImageTable.dayDate < cutoff_age_images_date)\
+            .order_by(IndiAllSkyDbImageTable.createDate.asc())
+        old_panorama_images = IndiAllSkyDbPanoramaImageTable.query\
+            .join(IndiAllSkyDbPanoramaImageTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbPanoramaImageTable.dayDate < cutoff_age_images_date)\
+            .order_by(IndiAllSkyDbPanoramaImageTable.createDate.asc())
+
+        # raw
+        cutoff_age_images_raw = now - timedelta(days=self.config.get('IMAGE_RAW_EXPIRE_DAYS', 10))
+        cutoff_age_images_raw_date = cutoff_age_images_raw.date()  # cutoff date based on dayDate attribute, not createDate
+
+        old_raw_images = IndiAllSkyDbRawImageTable.query\
+            .join(IndiAllSkyDbRawImageTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbRawImageTable.dayDate < cutoff_age_images_raw_date)\
+            .order_by(IndiAllSkyDbRawImageTable.createDate.asc())
+
+
+        # fits
+        cutoff_age_images_fits = now - timedelta(days=self.config.get('IMAGE_FITS_EXPIRE_DAYS', 10))
+        cutoff_age_images_fits_date = cutoff_age_images_fits.date()  # cutoff date based on dayDate attribute, not createDate
+
+        old_fits_images = IndiAllSkyDbFitsImageTable.query\
+            .join(IndiAllSkyDbFitsImageTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbFitsImageTable.dayDate < cutoff_age_images_fits_date)\
+            .order_by(IndiAllSkyDbFitsImageTable.createDate.asc())
+
+
+        # videos
+        cutoff_age_timelapse = now - timedelta(days=self.config.get('TIMELAPSE_EXPIRE_DAYS', 365))
+        cutoff_age_timelapse_date = cutoff_age_timelapse.date()  # cutoff date based on dayDate attribute, not createDate
+
+        old_videos = IndiAllSkyDbVideoTable.query\
+            .join(IndiAllSkyDbVideoTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbVideoTable.dayDate < cutoff_age_timelapse_date)\
+            .order_by(IndiAllSkyDbVideoTable.createDate.asc())
+        old_mini_videos = IndiAllSkyDbMiniVideoTable.query\
+            .join(IndiAllSkyDbMiniVideoTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbMiniVideoTable.dayDate < cutoff_age_timelapse_date)\
+            .order_by(IndiAllSkyDbMiniVideoTable.createDate.asc())
+        old_keograms = IndiAllSkyDbKeogramTable.query\
+            .join(IndiAllSkyDbKeogramTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbKeogramTable.dayDate < cutoff_age_timelapse_date)\
+            .order_by(IndiAllSkyDbKeogramTable.createDate.asc())
+        old_startrails = IndiAllSkyDbStarTrailsTable.query\
+            .join(IndiAllSkyDbStarTrailsTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbStarTrailsTable.dayDate < cutoff_age_timelapse_date)\
+            .order_by(IndiAllSkyDbStarTrailsTable.createDate.asc())
+        old_startrails_videos = IndiAllSkyDbStarTrailsVideoTable.query\
+            .join(IndiAllSkyDbStarTrailsVideoTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbStarTrailsVideoTable.dayDate < cutoff_age_timelapse_date)\
+            .order_by(IndiAllSkyDbStarTrailsVideoTable.createDate.asc())
+        old_panorama_videos = IndiAllSkyDbPanoramaVideoTable.query\
+            .join(IndiAllSkyDbPanoramaVideoTable.camera)\
+            .filter(IndiAllSkyDbCameraTable.id == camera.id)\
+            .filter(IndiAllSkyDbPanoramaVideoTable.dayDate < cutoff_age_timelapse_date)\
+            .order_by(IndiAllSkyDbPanoramaVideoTable.createDate.asc())
+
+
+        ### Getting IDs first then deleting each file is faster than deleting all files with
+        ### thumbnails with a single query.  Deleting associated thumbnails causes sqlalchemy
+        ### to recache after every delete which cause a 1-5 second lag for each delete
+
+
+        asset_lists = [
+            (old_images, IndiAllSkyDbImageTable),
+            (old_panorama_images, IndiAllSkyDbPanoramaImageTable),
+            (old_fits_images, IndiAllSkyDbFitsImageTable),
+            (old_raw_images, IndiAllSkyDbRawImageTable),
+            (old_videos, IndiAllSkyDbVideoTable),
+            (old_mini_videos, IndiAllSkyDbMiniVideoTable),
+            (old_keograms, IndiAllSkyDbKeogramTable),
+            (old_startrails, IndiAllSkyDbStarTrailsTable),
+            (old_startrails_videos, IndiAllSkyDbStarTrailsVideoTable),
+            (old_panorama_videos, IndiAllSkyDbPanoramaVideoTable),
+        ]
+
+
+        delete_count = 0
+        for asset_list, asset_table in asset_lists:
+            while True:
+                id_list = [entry.id for entry in asset_list.limit(500)]
+
+                if not id_list:
+                    break
+
+                delete_count += self._deleteAssets(asset_table, id_list)
+
+
+        # Remove empty folders
+        dir_list = list()
+        self._getFolderFolders(self.image_dir, dir_list)
+
+        empty_dirs = filter(lambda p: not any(p.iterdir()), dir_list)
+        for d in empty_dirs:
+            logger.info('Removing empty directory: %s', d)
+
+            try:
+                d.rmdir()
+            except OSError as e:
+                logger.error('Cannot remove folder: %s', str(e))
+            except PermissionError as e:
+                logger.error('Cannot remove folder: %s', str(e))
+
+
+        # Calibration uploads are private scratch data rather than registered
+        # FITS assets, so the database-backed FITS expiry above cannot see them.
+        # Run their fixed seven-day retention cleanup alongside the regular
+        # asset expiry as a server-side catch-all for interrupted browsers,
+        # broken network connections, crashes, and power loss.
+        try:
+            calibration_session_count = (
+                asi676mc_calibration.cleanup_expired_sessions()
+            )
+        except OSError:
+            calibration_session_count = 0
+            logger.exception('Unable to expire ASI676MC calibration sessions')
+        else:
+            if calibration_session_count:
+                logger.info(
+                    'Expired %d ASI676MC calibration session(s)',
+                    calibration_session_count,
+                )
+
+
+        ### Expire temporary scratch files
+        if self.scratch_base_dir.is_dir():
+            orphaned_scratch_file_list = list()
+            self._getFolderFilesAll(self.scratch_base_dir, orphaned_scratch_file_list)
+
+
+            now_minus_24h_ts = (now - timedelta(hours=24)).timestamp()
+            orphaned_scratch_file_list_24h = filter(lambda f: f.stat().st_mtime < now_minus_24h_ts, orphaned_scratch_file_list)
+
+            for f in orphaned_scratch_file_list_24h:
+                logger.warning('Deleting orphaned scratch file: %s', f)
+
+                try:
+                    f.unlink()
+                except PermissionError:
+                    pass
+                except OSError:
+                    pass
+
+
+        task.setSuccess(
+            'Expired {0:d} assets and {1:d} calibration sessions'.format(
+                delete_count,
+                calibration_session_count,
+            )
+        )
+
+
+    def _deleteAssets(self, table, entry_id_list):
+        delete_count = 0
+        for entry_id in entry_id_list:
+            entry = table.query\
+                .filter(table.id == entry_id)\
+                .one()
+
+            logger.info('Removing old %s entry: %s', entry.__class__.__name__, entry.filename)
+
+            try:
+                entry.deleteAsset()
+            except OSError as e:
+                logger.error('Cannot remove file: %s', str(e))
+                continue
+
+            db.session.delete(entry)
+            db.session.commit()
+
+            delete_count += 1
+
+        return delete_count
+
+
+    def _getVideoFolder(self, video_date, camera):
+        day_ref = video_date
+
+        video_folder = self.image_dir.joinpath(
+            'ccd_{0:s}'.format(camera.uuid),
+            'timelapse',
+            '{0:s}'.format(day_ref.strftime('%Y%m%d')),
+        )
+
+
+        if not video_folder.exists():
+            video_folder.mkdir(mode=0o755, parents=True)
+
+        return video_folder
+
+
+    def _getFolderFilesByExt(self, folder, file_list, extension_list=None):
+        if not extension_list:
+            extension_list = [self.config['IMAGE_FILE_TYPE']]
+
+        #logger.info('Searching for image files in %s', folder)
+
+        dot_extension_list = ['.{0:s}'.format(e) for e in extension_list]
+
+        for item in Path(folder).iterdir():
+            if item.is_file() and item.suffix in dot_extension_list:
+                file_list.append(item)
+            elif item.is_dir():
+                self._getFolderFilesByExt(item, file_list, extension_list=extension_list)  # recursion
+
+
+    def _getFolderFolders(self, folder, dir_list):
+        for item in Path(folder).iterdir():
+            if item.is_dir():
+                dir_list.append(item)
+                self._getFolderFolders(item, dir_list)  # recursion
+
+
+    def _getFolderFilesAll(self, folder, file_list):
+        for item in Path(folder).iterdir():
+            if item.is_file():
+                file_list.append(item)
+            elif item.is_dir():
+                self._getFolderFilesAll(item, file_list)  # recursion
+
+
+    def _load_detection_mask(self):
+        # populate initial dict
+        mask_dict = dict()
+        for x in set(self.binning_av):
+            mask_dict[x] = None
+
+
+        detect_mask = self.config.get('DETECT_MASK', '')
+
+        if not detect_mask:
+            logger.warning('No detection mask defined')
+            return mask_dict
+
+
+        detect_mask_p = Path(detect_mask)
+
+        try:
+            if not detect_mask_p.exists():
+                logger.error('%s does not exist', detect_mask_p)
+                return mask_dict
+
+
+            if not detect_mask_p.is_file():
+                logger.error('%s is not a file', detect_mask_p)
+                return mask_dict
+
+        except PermissionError as e:
+            logger.error(str(e))
+            return mask_dict
+
+
+        mask_data = cv2.imread(str(detect_mask_p), cv2.IMREAD_GRAYSCALE)  # mono
+        if isinstance(mask_data, type(None)):
+            logger.error('%s is not a valid image', detect_mask_p)
+            return mask_dict
+
+
+        logger.warning('Loaded detection mask: %s', detect_mask_p)
+
+
+        mask_height, mask_width = mask_data.shape[:2]
+
+
+        ### any intermediate values will be set to 255
+        mask_data[mask_data > 0] = 255
+
+
+        for binning in mask_dict.keys():
+            mask_processor = MaskProcessor(
+                self.config,
+            )
+
+            mask_processor.binning = binning
+
+
+            # masks need to be rotated, flipped, cropped for post-processed images
+            if binning == 1:
+                mask_processor.image = mask_data
+            else:
+                new_mask_height = int(mask_height / binning)
+                new_mask_width = int(mask_width / binning)
+
+                mask_processor.image = cv2.resize(mask_data, (new_mask_width, new_mask_height), interpolation=cv2.INTER_AREA)
+
+
+
+            # rotation
+            mask_processor.rotate_90()
+            mask_processor.rotate_angle()
+
+
+            # verticle flip
+            mask_processor.flip_v()
+
+
+            # horizontal flip
+            mask_processor.flip_h()
+
+
+            # crop
+            mask_processor.crop_image()
+
+
+            # scale
+            mask_processor.scale_image()
+
+
+            # add border
+            mask_processor.add_border()
+
+
+            mask_dict[x] = mask_processor.image
+
+
+        return mask_dict
