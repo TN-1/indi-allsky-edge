@@ -243,6 +243,26 @@ pull_requests:
     title: "feat: add all-night sky quality (stars and SQM) charts to timelapses"
     author: "TN-1"
 
+  - id: 3372
+    title: "Add a night report with keogram, sensor plots and CSV export"
+    author: "Rob0xFF"
+
+  - id: 3374
+    title: "Ignore a stale \"ready\" read right after submitting an exposure"
+    author: "jaxzin"
+
+  - id: 3375
+    title: "Skip CCD_BINNING for indi_v4l2_ccd (does not support binning)"
+    author: "jaxzin"
+
+  - id: 3376
+    title: "Skip setup.sh notice boxes when the camera interface is preset"
+    author: "jaxzin"
+
+  - id: 3377
+    title: "Live focus page and autofocus"
+    author: "jaxzin"
+
   - id: 3116
     title: "Feature: Test Suite"
     author: "TN-1"

@@ -127,12 +127,16 @@ The script will halt at the conflicting commit in `./workspace`.
      git config rerere.autoupdate true
      ```
   2. Open the conflicting file in an editor. Resolve the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`).
-  3. Stage and commit the resolution in `workspace`:
+  3. Verify that no stray conflict markers remain anywhere in the workspace before committing:
+     ```bash
+     git grep -n -E "^(<<<<<<<|=======$|>>>>>>>)" -- indi_allsky/ tests/
+     ```
+  4. Stage and commit the resolution in `workspace`:
      ```bash
      git add indi_allsky/flask/views.py
      git commit --no-edit
      ```
-  4. Export the newly recorded resolution hash from `workspace/.git/rr-cache/` to the root repository:
+  5. Export the newly recorded resolution hash from `workspace/.git/rr-cache/` to the root repository:
      ```bash
      cd ..
      cp -r workspace/.git/rr-cache/* ./rr-cache/
@@ -140,7 +144,7 @@ The script will halt at the conflicting commit in `./workspace`.
      git commit -m "chore(rerere): record conflict resolution for PR #X and #Y"
      git push origin main
      ```
-  5. In all future CI runs, Git will automatically apply this resolution without pausing.
+  6. In all future CI runs, Git will automatically apply this resolution without pausing.
 
 * **Tier 3: Complex Architectural Differences (Patch)**
   If two PRs require substantial adapter code:
@@ -180,3 +184,4 @@ bash debian/tests/qa_test.sh
    Conflicts: indi-allsky
    Replaces: indi-allsky
    ```
+6. **Scan for stray conflict markers on every synthesis round.** After any conflict resolution or `rebuild.py` run—and before committing `rr-cache/` or `patches/`—run `git -C workspace grep -n -E "^(<<<<<<<|=======$|>>>>>>>)" -- indi_allsky/ tests/` and confirm zero matches.

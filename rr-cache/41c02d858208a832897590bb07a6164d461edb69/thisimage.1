@@ -3274,6 +3274,29 @@ def CIRCULAR_DISPLAY__IMAGE_CIRCLE_DIAMETER_validator(form, field):
         raise ValidationError('Value must be 100 or greater')
 
 
+def FOCUSER__TRAVEL_LIMIT_DEGREES_validator(form, field):
+    if not isinstance(field.data, int):
+        raise ValidationError('Please enter a valid number')
+
+    if field.data < 10:
+        raise ValidationError('Value must be 10 or greater')
+
+    if field.data > 3600:
+        raise ValidationError('Value must be 3600 or less')
+
+
+def FOCUSER__SLACK_DEGREES_validator(form, field):
+    if not isinstance(field.data, int):
+        raise ValidationError('Please enter a valid number')
+
+    if field.data < 0:
+        raise ValidationError('Value must be 0 or greater')
+
+    limit = form.FOCUSER__TRAVEL_LIMIT_DEGREES.data
+    if isinstance(limit, int) and field.data >= limit:
+        raise ValidationError('Slack must be less than the travel limit')
+
+
 def FOCUSER__CLASSNAME_validator(form, field):
     if field.data not in list(zip(*form.FOCUSER__CLASSNAME_choices))[0]:
         raise ValidationError('Invalid selection')
@@ -5337,6 +5360,8 @@ class IndiAllskyConfigForm(FlaskForm):
     FOCUSER__GPIO_PIN_3              = StringField('GPIO Pin 3', validators=[DEVICE_PIN_NAME_validator])
     FOCUSER__GPIO_PIN_4              = StringField('GPIO Pin 4', validators=[DEVICE_PIN_NAME_validator])
     FOCUSER__I2C_ADDRESS             = StringField('I2C Address', validators=[DataRequired(), I2C_ADDRESS_validator])
+    FOCUSER__TRAVEL_LIMIT_DEGREES    = IntegerField('Lens Travel Limit (degrees each way)', validators=[FOCUSER__TRAVEL_LIMIT_DEGREES_validator])
+    FOCUSER__SLACK_DEGREES           = IntegerField('Gear Slack (degrees)', validators=[FOCUSER__SLACK_DEGREES_validator])
     DEW_HEATER__CLASSNAME            = SelectField('Dew Heater', choices=DEW_HEATER__CLASSNAME_choices, validators=[DEW_HEATER__CLASSNAME_validator])
     DEW_HEATER__ENABLE_DAY           = BooleanField('Enable Daytime')
     DEW_HEATER__I2C_ADDRESS          = StringField('I2C Address', validators=[DataRequired(), I2C_ADDRESS_validator])
@@ -7908,6 +7933,28 @@ def normalize_video_tags(raw_tags):
     return normalized
 
 
+def night_report_urls(entry, *, local):
+    """Expose report actions only where the local keogram may be displayed."""
+    if (not local or entry is None or not entry.night or not entry.success
+            or not entry.camera.local or entry.camera.hidden):
+        return {}
+    from ..night_report_service import report_ready
+    urls = {
+        'view': url_for('indi_allsky.night_report_view', keogram_id=entry.id),
+    }
+    try:
+        if not report_ready(entry):
+            return urls
+    except (OSError, ValueError):
+        return urls
+    urls.update({
+        'image': url_for('indi_allsky.night_report_view', keogram_id=entry.id, format='png'),
+        'png': url_for('indi_allsky.night_report_view', keogram_id=entry.id, format='png', download=1),
+        'csv': url_for('indi_allsky.night_report_view', keogram_id=entry.id, format='csv', download=1),
+    })
+    return urls
+
+
 class IndiAllskyVideoViewer(FlaskForm):
     TIMEOFDAY_SELECT_choices = (
         ('all', 'All'),
@@ -8349,6 +8396,7 @@ class IndiAllskyVideoViewer(FlaskForm):
             entry['keogram_id'] = keogram_id
             entry['keogram_thumbnail']  = str(keogram_thumbnail_url)
             entry['keogram_success']  = keogram_success
+            entry['night_report'] = night_report_urls(keogram_entry, local=self.local)
             entry['startrail']  = str(startrail_url)
             entry['startrail_thumbnail']  = str(startrail_thumbnail_url)
             entry['startrail_id']  = startrail_id
