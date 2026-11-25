@@ -263,6 +263,18 @@ pull_requests:
     title: "Live focus page and autofocus"
     author: "jaxzin"
 
+  - id: 3378
+    title: "Add AllskyTeam Map integration"
+    author: "trevornicholls"
+
+  - id: 3379
+    title: "fix: replace scalar src2=0 addWeighted with cv2.multiply in auto white balance"
+    author: "TN-1"
+
+  - id: 3380
+    title: "fix(ui): improve accessibility, daisyUI v5 hygiene, navigation, and mobile states"
+    author: "TN-1"
+
   - id: 3116
     title: "Feature: Test Suite"
     author: "TN-1"

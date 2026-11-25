@@ -1,0 +1,2478 @@
+import os
+import time
+import io
+import json
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
+from pathlib import Path
+import tempfile
+import math
+import subprocess
+import dbus
+import signal
+import logging
+import traceback
+
+import ephem
+
+from multiprocessing import Process
+#from threading import Thread
+
+from .worker_activity import WorkerActivity
+from . import constants
+from .capture_health import CameraImageQueue, ExposureDeadline
+from . import camera as camera_module
+
+from .utils import IndiAllSkyDateCalcs
+from .utils import IndiAllSkyExposureUtils
+from .capture_state import CameraCapabilities
+from .capture_state import build_effective_capture_state
+from .capture_control import drain_worker_control_queue
+
+from .flask.models import TaskQueueQueue
+from .flask.models import TaskQueueState
+
+from .flask.models import IndiAllSkyDbCameraTable
+from .flask.models import IndiAllSkyDbImageTable
+from .flask.models import NotificationCategory
+from .flask.models import IndiAllSkyDbTaskQueueTable
+
+from .exceptions import IndiServerException
+from .exceptions import CameraException
+from .exceptions import TimeOutException
+from .exceptions import TemperatureException
+
+from .flask import create_app
+from .flask import db
+from .flask.miscDb import miscDb
+
+from sqlalchemy.orm.exc import MultipleResultsFound
+
+
+app = create_app()
+
+logger = logging.getLogger('indi_allsky')
+
+
+class CaptureWorker(Process):
+
+    periodic_tasks_offset = 300.0  # 5 minutes
+
+
+    SENSOR_SLOTS = (
+        ['sensor_user_0', 'Camera Temp'],  # mutable
+        ['sensor_user_1', 'Dew Heater Level'],
+        ['sensor_user_2', 'Dew Point'],
+        ['sensor_user_3', 'Frost Point'],
+        ['sensor_user_4', 'Fan Level'],
+        ['sensor_user_5', 'Heat Index'],
+        ['sensor_user_6', 'Wind Dir (Degrees)'],
+        ['sensor_user_7', 'Sensor SQM Magnitude (mag/arcsec²)'],
+        ['sensor_user_8', 'Camera SQM Magnitude (mag/arcsec²)'],
+        ['sensor_user_9', 'Camera SQM ADU'],
+        ['sensor_user_10', 'User Slot 10'],
+        ['sensor_user_11', 'User Slot 11'],
+        ['sensor_user_12', 'User Slot 12'],
+        ['sensor_user_13', 'User Slot 13'],
+        ['sensor_user_14', 'User Slot 14'],
+        ['sensor_user_15', 'User Slot 15'],
+        ['sensor_user_16', 'User Slot 16'],
+        ['sensor_user_17', 'User Slot 17'],
+        ['sensor_user_18', 'User Slot 18'],
+        ['sensor_user_19', 'User Slot 19'],
+        ['sensor_user_20', 'User Slot 20'],
+        ['sensor_user_21', 'User Slot 21'],
+        ['sensor_user_22', 'User Slot 22'],
+        ['sensor_user_23', 'User Slot 23'],
+        ['sensor_user_24', 'User Slot 24'],
+        ['sensor_user_25', 'User Slot 25'],
+        ['sensor_user_26', 'User Slot 26'],
+        ['sensor_user_27', 'User Slot 27'],
+        ['sensor_user_28', 'User Slot 28'],
+        ['sensor_user_29', 'User Slot 29'],
+        ['sensor_user_30', 'User Slot 30'],
+        ['sensor_user_31', 'User Slot 31'],
+        ['sensor_user_32', 'User Slot 32'],
+        ['sensor_user_33', 'User Slot 33'],
+        ['sensor_user_34', 'User Slot 34'],
+        ['sensor_user_35', 'User Slot 35'],
+        ['sensor_user_36', 'User Slot 36'],
+        ['sensor_user_37', 'User Slot 37'],
+        ['sensor_user_38', 'User Slot 38'],
+        ['sensor_user_39', 'User Slot 39'],
+        ['sensor_user_40', 'User Slot 40'],
+        ['sensor_user_41', 'User Slot 41'],
+        ['sensor_user_42', 'User Slot 42'],
+        ['sensor_user_43', 'User Slot 43'],
+        ['sensor_user_44', 'User Slot 44'],
+        ['sensor_user_45', 'User Slot 45'],
+        ['sensor_user_46', 'User Slot 46'],
+        ['sensor_user_47', 'User Slot 47'],
+        ['sensor_user_48', 'User Slot 48'],
+        ['sensor_user_49', 'User Slot 49'],
+        ['sensor_user_50', 'User Slot 50'],
+        ['sensor_user_51', 'User Slot 51'],
+        ['sensor_user_52', 'User Slot 52'],
+        ['sensor_user_53', 'User Slot 53'],
+        ['sensor_user_54', 'User Slot 54'],
+        ['sensor_user_55', 'User Slot 55'],
+        ['sensor_user_56', 'User Slot 56'],
+        ['sensor_user_57', 'User Slot 57'],
+        ['sensor_user_58', 'User Slot 58'],
+        ['sensor_user_59', 'User Slot 59'],
+        ['sensor_user_100', 'Rain Value'],
+        ['sensor_user_101', 'User Slot 101'],
+        ['sensor_user_102', 'User Slot 102'],
+        ['sensor_user_103', 'User Slot 103'],
+        ['sensor_user_104', 'User Slot 104'],
+        ['sensor_user_105', 'User Slot 105'],
+        ['sensor_user_106', 'User Slot 106'],
+        ['sensor_user_107', 'User Slot 107'],
+        ['sensor_user_108', 'User Slot 108'],
+        ['sensor_user_109', 'User Slot 109'],
+
+        ['sensor_temp_0', 'Camera Temp'],
+        ['sensor_temp_1', 'Future Use 1'],
+        ['sensor_temp_2', 'Future Use 2'],
+        ['sensor_temp_3', 'Future Use 3'],
+        ['sensor_temp_4', 'Future Use 4'],
+        ['sensor_temp_5', 'Future Use 5'],
+        ['sensor_temp_6', 'Future Use 6'],
+        ['sensor_temp_7', 'Future Use 7'],
+        ['sensor_temp_8', 'Future Use 8'],
+        ['sensor_temp_9', 'Future Use 9'],
+        ['sensor_temp_10', 'System Temp 10'],
+        ['sensor_temp_11', 'System Temp 11'],
+        ['sensor_temp_12', 'System Temp 12'],
+        ['sensor_temp_13', 'System Temp 13'],
+        ['sensor_temp_14', 'System Temp 14'],
+        ['sensor_temp_15', 'System Temp 15'],
+        ['sensor_temp_16', 'System Temp 16'],
+        ['sensor_temp_17', 'System Temp 17'],
+        ['sensor_temp_18', 'System Temp 18'],
+        ['sensor_temp_19', 'System Temp 19'],
+        ['sensor_temp_20', 'System Temp 20'],
+        ['sensor_temp_21', 'System Temp 21'],
+        ['sensor_temp_22', 'System Temp 22'],
+        ['sensor_temp_23', 'System Temp 23'],
+        ['sensor_temp_24', 'System Temp 24'],
+        ['sensor_temp_25', 'System Temp 25'],
+        ['sensor_temp_26', 'System Temp 26'],
+        ['sensor_temp_27', 'System Temp 27'],
+        ['sensor_temp_28', 'System Temp 28'],
+        ['sensor_temp_29', 'System Temp 29'],
+        ['sensor_temp_30', 'System Temp 30'],
+        ['sensor_temp_31', 'System Temp 31'],
+        ['sensor_temp_32', 'System Temp 32'],
+        ['sensor_temp_33', 'System Temp 33'],
+        ['sensor_temp_34', 'System Temp 34'],
+        ['sensor_temp_35', 'System Temp 35'],
+        ['sensor_temp_36', 'System Temp 36'],
+        ['sensor_temp_37', 'System Temp 37'],
+        ['sensor_temp_38', 'System Temp 38'],
+        ['sensor_temp_39', 'System Temp 39'],
+        ['sensor_temp_40', 'System Temp 40'],
+        ['sensor_temp_41', 'System Temp 41'],
+        ['sensor_temp_42', 'System Temp 42'],
+        ['sensor_temp_43', 'System Temp 43'],
+        ['sensor_temp_44', 'System Temp 44'],
+        ['sensor_temp_45', 'System Temp 45'],
+        ['sensor_temp_46', 'System Temp 46'],
+        ['sensor_temp_47', 'System Temp 47'],
+        ['sensor_temp_48', 'System Temp 48'],
+        ['sensor_temp_49', 'System Temp 49'],
+        ['sensor_temp_50', 'System Temp 50'],
+        ['sensor_temp_51', 'System Temp 51'],
+        ['sensor_temp_52', 'System Temp 52'],
+        ['sensor_temp_53', 'System Temp 53'],
+        ['sensor_temp_54', 'System Temp 54'],
+        ['sensor_temp_55', 'System Temp 55'],
+        ['sensor_temp_56', 'System Temp 56'],
+        ['sensor_temp_57', 'System Temp 57'],
+        ['sensor_temp_58', 'System Temp 58'],
+        ['sensor_temp_59', 'System Temp 59'],
+
+        ['kpindex', 'Planetary K-Index (kpindex)'],
+        ['ovation_max', 'Aurora Chance'],
+        ['aurora_mag_bt', 'Solar Wind Bt [nT]'],
+        ['aurora_mag_gsm_bz', 'Solar Wind Bz'],
+        ['aurora_plasma_density', 'Solar Wind Plasma Density [1/cm³]'],
+        ['aurora_plasma_speed', 'Solar Wind Plasma Speed [km/s]'],
+        ['aurora_plasma_temp', 'Solar Wind Plasma Temperature [K]'],
+        ['aurora_n_hemi_gw', 'Hemispheric Power - Northern [GW]'],
+        ['aurora_s_hemi_gw', 'Hemispheric Power - Southern [GW]'],
+        ['camera_sqm_raw_mag', 'Camera SQM Raw Magnitude'],
+    )
+
+
+    def __init__(
+        self,
+        idx,
+        config,
+        error_q,
+        capture_q,
+        image_q,
+        video_q,
+        upload_q,
+        position_av,
+        exposure_av,
+        gain_av,
+        binning_av,
+        sensors_temp_av,
+        sensors_user_av,
+        night_av,
+        astro_av,
+        health,
+    ):
+
+        super(CaptureWorker, self).__init__()
+
+        self.name = 'Capture-{0:d}'.format(idx)
+
+        self.config = config
+        self.activity = WorkerActivity(config, 'capture')
+        self.error_q = error_q
+        self.capture_q = capture_q
+        self.image_q = image_q
+        self.health = health
+        self.video_q = video_q
+        self.upload_q = upload_q
+
+        self.position_av = position_av
+        self.exposure_av = exposure_av
+        self.gain_av = gain_av
+        self.binning_av = binning_av
+
+        self.sensors_temp_av = sensors_temp_av  # 0 ccd_temp
+        self.sensors_user_av = sensors_user_av  # 0 ccd_temp
+        self.night_av = night_av
+        self.astro_av = astro_av
+
+        self._miscDb = miscDb(self.config)
+        self._expUtils = IndiAllSkyExposureUtils(self.config, self.exposure_av, self.gain_av, self.binning_av)
+        self._dateCalcs = IndiAllSkyDateCalcs(self.config, self.position_av)
+
+        self.next_forced_transition_time = None
+
+        self.indiclient = None
+
+        self.night = None
+        self.moonmode = None
+
+        self.camera_id = None
+        self.camera_name = None
+        self.camera_server = None
+
+        self.indi_config = self.config.get('INDI_CONFIG_DEFAULTS', {})
+        self.reconfigure_camera = False
+
+        self.focus_mode = self.config.get('FOCUS_MODE', False)  # focus mode takes images as fast as possible
+
+        self.night_sun_radians = math.radians(self.config['NIGHT_SUN_ALT_DEG'])
+        self.night_moonmode_radians = math.radians(self.config['NIGHT_MOONMODE_ALT_DEG'])
+
+        self.update_time_offset = None  # when time needs to be updated, this will be the offset
+
+        self.image_queue_max = self.config.get('IMAGE_QUEUE_MAX', 3)
+        self.image_queue_min = self.config.get('IMAGE_QUEUE_MIN', 1)
+        self.image_queue_backoff = self.config.get('IMAGE_QUEUE_BACKOFF', 0.5)
+        self.add_period_delay = 0.0
+
+
+        now_time = time.time()
+
+        self.periodic_tasks_time = now_time + self.periodic_tasks_offset
+        #self.periodic_tasks_time = now_time  # testing
+
+        self.sqm_camera_enable = self.config.get('CAMERA_SQM', {}).get('ENABLE')
+        self.sqm_camera_enable_day = self.config.get('CAMERA_SQM', {}).get('ENABLE_DAY')
+        self.sqm_tasks_offset = self.config.get('CAMERA_SQM', {}).get('EXPOSURE_PERIOD', 900)
+        self.sqm_tasks_time = now_time + min(300, self.sqm_tasks_offset)  # take SQM exposure 5 minutes (or less) after starting
+
+        self.exposure_timeout = self.config.get('CCD_EXPOSURE_TIMEOUT', 330)
+        self.deadline = ExposureDeadline(self.exposure_timeout)
+
+
+        if self.config['IMAGE_FOLDER']:
+            self.image_dir = Path(self.config['IMAGE_FOLDER']).absolute()
+        else:
+            self.image_dir = Path(__file__).parent.parent.joinpath('html', 'images').absolute()
+
+
+        self.generate_timelapse_flag = False   # This is updated once images have been generated
+
+        self._shutdown = False
+
+
+
+    def sighup_handler_worker(self, signum, frame):
+        logger.warning('Caught HUP signal')
+
+        # set flag for program to stop processes
+        self._shutdown = True
+
+
+    def sigterm_handler_worker(self, signum, frame):
+        logger.warning('Caught TERM signal')
+
+        # set flag for program to stop processes
+        self._shutdown = True
+
+
+    def sigint_handler_worker(self, signum, frame):
+        logger.warning('Caught INT signal')
+
+        # set flag for program to stop processes
+        self._shutdown = True
+
+
+    def sigalarm_handler_worker(self, signum, frame):
+        raise TimeOutException()
+
+
+    def _processCaptureControlQueue(self):
+        stop_requested, time_offset, unknown_actions = drain_worker_control_queue(
+            self.capture_q,
+        )
+        if stop_requested:
+            self._shutdown = True
+        if time_offset is not None:
+            self.update_time_offset = time_offset
+        for action in unknown_actions:
+            logger.error('Unknown action: %s', str(action))
+
+
+    def run(self):
+        # setup signal handling after detaching from the main process
+        signal.signal(signal.SIGHUP, self.sighup_handler_worker)
+        signal.signal(signal.SIGTERM, self.sigterm_handler_worker)
+        signal.signal(signal.SIGINT, self.sigint_handler_worker)
+        signal.signal(signal.SIGALRM, self.sigalarm_handler_worker)
+
+
+        ### use this as a method to log uncaught exceptions
+        try:
+            self.saferun()
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.error_q.put((str(e), tb))
+            raise
+        finally:
+            self.activity.clear()
+            # Explicitly reap an external camera command before allowing a
+            # replacement capture worker to claim the camera.
+            if self.indiclient and hasattr(self.indiclient, 'closeCameraProcess'):
+                while not self.indiclient.closeCameraProcess():
+                    self.health.unreaped.value = 1
+                    time.sleep(5)
+                self.health.unreaped.value = 0
+
+
+    def saferun(self):
+        #raise Exception('Test exception handling in worker')
+
+
+        self.detectNight()
+
+        ### Update shared values to match current state
+        with self.night_av.get_lock():
+            self.night_av[constants.NIGHT_NIGHT] = int(self.night)
+            self.night_av[constants.NIGHT_MOONMODE] = int(self.moonmode)
+
+
+        with app.app_context():
+            self._initialize()
+
+            self._pre_run_tasks()
+
+
+        next_frame_time = time.monotonic()  # start immediately
+        frame_start_time = time.monotonic()
+        waiting_for_frame = False
+        waiting_for_sqm_frame = False
+
+        camera_ready = False
+        exposure_state = 'unset'
+        self.health.capture_stage('idle')
+
+        self.reconfigure_camera = True  # reconfigure on first run
+
+
+        self.next_forced_transition_time = self._dateCalcs.getNextDayNightTransition().timestamp()
+        logger.warning(
+            'Next forced transition time: %s (%0.1fh)',
+            datetime.fromtimestamp(self.next_forced_transition_time).strftime('%Y-%m-%d %H:%M:%S'),
+            (self.next_forced_transition_time - time.time()) / 3600,
+        )
+
+
+        ### main loop starts
+        while True:
+            loop_start_time = time.time()
+
+
+            self.health.pulse.value = int(time.monotonic())
+            logger.info('Exposure state: %s', exposure_state)
+
+
+            if self.indiclient.disconnected:
+                logger.error('indiclient indicates indiserver disconnected, restarting capture process')
+                with app.app_context():
+                    self._miscDb.setState('STATUS', constants.STATUS_NOINDISERVER)
+                return
+
+
+            if self.indiclient.ccd_removed:
+                # INDI >= 2.1.7 supports hotplugging cameras
+                # If a [USB] camera is disconnected, it should automatically be detected when reconnected
+                # Older than 2.1.7 requires indiserver to be restarted
+                logger.error('indiclient indicates the camera has been removed, restarting capture process')
+                with app.app_context():
+                    self._miscDb.setState('STATUS', constants.STATUS_NOCAMERA)
+                return
+
+
+            self._processCaptureControlQueue()
+
+
+            self.detectNight()
+
+
+            with app.app_context():
+                if bool(self.night_av[constants.NIGHT_NIGHT]) != self.night:
+                    ### Change between day and night
+
+                    self.reconfigure_camera = True
+
+                    # update transition time
+                    self.next_forced_transition_time = self._dateCalcs.getNextDayNightTransition().timestamp()
+
+                    logger.warning(
+                        'Next forced transition time: %s (%0.1fh)',
+                        datetime.fromtimestamp(self.next_forced_transition_time).strftime('%Y-%m-%d %H:%M:%S'),
+                        (self.next_forced_transition_time - loop_start_time) / 3600,
+                    )
+
+
+                    dayDate = self._dateCalcs.getDayDate()
+
+
+                    if not self.night and self.generate_timelapse_flag:
+                        self._expireData(self.camera_id)  # cleanup old images and folders
+
+                        ### Generate timelapse at end of night
+                        yesterday_ref = dayDate - timedelta(days=1)
+                        timespec = yesterday_ref.strftime('%Y%m%d')
+                        self._generateNightKeogram(timespec, self.camera_id)  # keogram/st first
+                        self._generateNightTimelapse(timespec, self.camera_id)
+                        self._uploadAllskyEndOfNight(self.camera_id)
+
+                        # prevent duplicate generation until reconfigureCcd() is called
+                        self.generate_timelapse_flag = False
+
+                    elif self.night and self.generate_timelapse_flag:
+                        self._expireData(self.camera_id)  # cleanup old images and folders
+
+                        ### Generate timelapse at end of day
+                        today_ref = dayDate
+                        timespec = today_ref.strftime('%Y%m%d')
+                        self._generateDayKeogram(timespec, self.camera_id)  # keogram/st first
+                        self._generateDayTimelapse(timespec, self.camera_id)
+
+                        # prevent duplicate generation until reconfigureCcd() is called
+                        self.generate_timelapse_flag = False
+
+                elif self.night and bool(self.night_av[constants.NIGHT_MOONMODE]) != self.moonmode:
+                    # Switch between night non-moonmode and moonmode
+                    self.reconfigure_camera = True
+
+                elif loop_start_time > self.next_forced_transition_time:
+                    # this should only happen when the sun never sets/rises
+
+                    self.reconfigure_camera = True
+
+                    if self.night:
+                        logger.warning('End of night reached, forcing transition to next night period')
+                    else:
+                        logger.warning('End of day reached, forcing transition to next day period')
+
+
+                    # update transition time
+                    self.next_forced_transition_time = self._dateCalcs.getNextDayNightTransition().timestamp()
+                    logger.warning(
+                        'Next forced transition time: %s (%0.1fh)',
+                        datetime.fromtimestamp(self.next_forced_transition_time).strftime('%Y-%m-%d %H:%M:%S'),
+                        (self.next_forced_transition_time - loop_start_time) / 3600,
+                    )
+
+
+                    dayDate = self._dateCalcs.getDayDate()
+
+
+                    if not self.night and self.generate_timelapse_flag:
+                        self._expireData(self.camera_id)  # cleanup old images and folders
+
+                        ### Generate timelapse at end of day
+                        yesterday_ref = dayDate - timedelta(days=1)
+                        timespec = yesterday_ref.strftime('%Y%m%d')
+                        self._generateDayKeogram(timespec, self.camera_id)  # keogram/st first
+                        self._generateDayTimelapse(timespec, self.camera_id)
+                        self._expireData(self.camera_id)  # cleanup old images and folders
+
+                        # prevent duplicate generation until reconfigureCcd() is called
+                        self.generate_timelapse_flag = False
+
+                    elif self.night and self.generate_timelapse_flag:
+                        self._expireData(self.camera_id)  # cleanup old images and folders
+
+                        ### Generate timelapse at end of night
+                        yesterday_ref = dayDate - timedelta(days=1)
+                        timespec = yesterday_ref.strftime('%Y%m%d')
+                        self._generateNightKeogram(timespec, self.camera_id)  # keogram/st first
+                        self._generateNightTimelapse(timespec, self.camera_id)
+                        self._uploadAllskyEndOfNight(self.camera_id)
+
+                        # prevent duplicate generation until reconfigureCcd() is called
+                        self.generate_timelapse_flag = False
+
+
+                #logger.warning(
+                #    'Next forced transition time: %s (%0.1fh)',
+                #    datetime.fromtimestamp(self.next_forced_transition_time).strftime('%Y-%m-%d %H:%M:%S'),
+                #    (self.next_forced_transition_time - loop_start_time) / 3600,
+                #)
+
+
+                self.getCcdTemperature()
+                self.getTelescopeRaDec()
+                self.getGpsPosition()
+
+
+                archive_blocked = bool(self.health.archive_blocked.value)
+                if self.config.get('CAPTURE_PAUSE') or archive_blocked:
+                    self.deadline.previous_until = None
+                    if self.deadline.until is not None:
+                        self.indiclient.abortCcdExposure()
+                        self.deadline.until = None
+                        waiting_for_frame = waiting_for_sqm_frame = False
+                    self.activity.clear()
+                    self.health.capture_stage('paused')
+                    if not archive_blocked:
+                        logger.warning('*** CAPTURE PAUSED ***')
+                        now_time = time.time()
+                        self._miscDb.setState('WATCHDOG', int(now_time))
+                        self._miscDb.setState('STATUS', constants.STATUS_PAUSED)
+
+                    if self._shutdown:
+                        logger.warning('Shutting down')
+                        self.indiclient.disableCcdCooler()  # safety
+
+                        self.indiclient.disconnectServer()
+
+                        logger.warning('Goodbye')
+                        return
+
+
+                    time.sleep(31)  # prime number
+                    continue
+
+                elif not self.night and not self.config.get('DAYTIME_CAPTURE'):
+                    self.deadline.previous_until = None
+                    if self.deadline.until is not None:
+                        self.indiclient.abortCcdExposure()
+                        self.deadline.until = None
+                        waiting_for_frame = waiting_for_sqm_frame = False
+                    self.activity.clear()
+                    self.health.capture_stage('daytime_disabled')
+                    logger.info('Daytime capture disabled')
+                    self.generate_timelapse_flag = False
+
+                    now_time = time.time()
+                    self._miscDb.setState('WATCHDOG', int(now_time))
+                    self._miscDb.setState('STATUS', constants.STATUS_SLEEPING)
+
+                    if self._shutdown:
+                        logger.warning('Shutting down')
+                        self.indiclient.disableCcdCooler()  # safety
+
+                        self.indiclient.disconnectServer()
+
+                        logger.warning('Goodbye')
+                        return
+
+
+                    time.sleep(31)  # prime number
+                    continue
+
+
+                # Poll the driver independently of wall-clock/NTP changes.
+                loop_end = time.monotonic() + 11
+                while time.monotonic() < loop_end:
+                    time.sleep(0.05)
+                    now_time = time.time()  # astronomy and periodic jobs use civil time
+                    monotonic_now = time.monotonic()
+                    self.health.pulse.value = int(monotonic_now)
+                    camera_ready, exposure_state = self.indiclient.getCcdExposureStatus()
+                    action = self.deadline.poll(monotonic_now, camera_ready, self.health.frames.value,
+                                                failed=(exposure_state == 'ERROR'), stopping=self._shutdown,
+                                                unfinished=bool(self.health.unfinished.value))
+                    if action in ('stop', 'stop_abort'):
+                        logger.info('Finishing planned capture shutdown')
+                        if action == 'stop_abort':
+                            self.indiclient.abortCcdExposure()
+                        self.indiclient.disableCcdCooler()
+                        self.indiclient.disconnectServer()
+                        return
+                    if action == 'wait':
+                        if waiting_for_frame and camera_ready and not self.deadline.aborting:
+                            self.activity.set(self.camera_id, 'Waiting for camera image')
+                        continue
+                    if action == 'abort':
+                        self.activity.set(self.camera_id, 'Recovering exposure')
+                        self.health.capture_stage('aborting')
+                        self.health.last_failure.value = int(now_time)
+                        logger.error('Capture request failed: state=%s, raw frames since request=%d; aborting',
+                                     exposure_state, self.health.frames.value - self.deadline.initial_frames)
+                        self._miscDb.addNotification(
+                            NotificationCategory.CAMERA, 'last_ready',
+                            'Exposure failed to produce a frame or return to READY. Aborting exposure.',
+                            expire=timedelta(minutes=60),
+                        )
+                        self.indiclient.abortCcdExposure()
+<<<<<<<
+=======
+                        exposure_aborted = True
+
+
+                # Loop to run for 11 seconds (prime number)
+                loop_end = time.time() + 11
+
+                while True:
+                    time.sleep(0.05)
+
+                    # A maintenance handoff may be accepted while the current
+                    # exposure is still running.  Latch that request now and
+                    # drain only after the camera reports ready.
+                    self._processCaptureControlQueue()
+
+                    now_time = time.time()
+                    if now_time >= loop_end:
+                        break
+
+                    last_camera_ready = camera_ready
+
+
+                    if not exposure_aborted:
+                        camera_ready, exposure_state = self.indiclient.getCcdExposureStatus()
+                    else:
+                        # Aborted exposure, bypass next checks
+                        exposure_aborted = False  # reset
+                        camera_ready = True
+                        exposure_state = 'Aborted'
+                        waiting_for_frame = False
+                        waiting_for_sqm_frame = False
+
+
+                    if not camera_ready:
+>>>>>>>
+                        continue
+                    if action == 'reconnect':
+                        logger.error('Exposure recovery failed; disconnecting and restarting the capture worker')
+                        if self.health.unfinished.value and not camera_ready:
+                            self.indiclient.abortCcdExposure()
+                        self.health.unfinished.value = int(not camera_ready)
+                        self.indiclient.disconnectServer()
+                        return
+                    self.health.unfinished.value = 0
+                    if action == 'retry':
+                        waiting_for_frame = waiting_for_sqm_frame = False
+                        next_frame_time = max(next_frame_time, monotonic_now + 5)
+                    self.activity.set(self.camera_id, 'Waiting for next exposure')
+                    self.health.capture_stage('idle')
+
+                    if waiting_for_frame:
+                        frame_elapsed = monotonic_now - frame_start_time
+                        frame_delta = frame_elapsed - self._expUtils.EXPOSURE_CURRENT
+
+                        waiting_for_frame = False
+                        waiting_for_sqm_frame = False
+
+                        logger.info('Exposure received in %0.4fs (%+0.4fs)', frame_elapsed, frame_delta)
+
+
+                        if frame_delta < -1:
+
+                            if self.config['CAMERA_INTERFACE'].startswith('pycurl'):
+                                ### camera does not obey expsoure values
+                                pass
+                            elif self.config['CAMERA_INTERFACE'] == 'indi_passive':
+                                ### camera does not obey expsoure values
+                                pass
+                            else:
+                                logger.error('%0.6fs EXPOSURE RECEIVED IN %0.3fs.  POSSIBLE CAMERA PROBLEM.', self._expUtils.EXPOSURE_CURRENT, frame_elapsed)
+                                self._miscDb.addNotification(
+                                    NotificationCategory.CAMERA,
+                                    'exposure_delta',
+                                    '{0:0.6f}s exposure received in {1:0.3f}s.  Possible camera problem.'.format(self._expUtils.EXPOSURE_CURRENT, frame_elapsed),
+                                    expire=timedelta(minutes=60),
+                                )
+
+
+
+                    ##########################################################################
+                    # Here we know the camera is not busy and we are not waiting for a frame #
+                    ##########################################################################
+
+                    # reconfigure if needed
+                    if self.reconfigure_camera:
+                        with self.activity.during(self.camera_id, 'Configuring camera'):
+                            self.reconfigureCcd()
+
+
+                    # these tasks run every ~5 minutes
+                    if now_time > self.periodic_tasks_time:
+                        self._periodic_tasks()
+
+
+                    # update system time from time offset
+                    if self.update_time_offset:
+                        utcnow = datetime.now(tz=timezone.utc)
+
+                        new_time_utc = datetime.fromtimestamp(utcnow.timestamp() - self.update_time_offset).astimezone(tz=timezone.utc)
+
+                        self.update_time_offset = None  # reset
+
+                        try:
+                            self.setTimeSystemd(new_time_utc)
+                        except dbus.exceptions.DBusException as e:
+                            logger.error('DBus Error: %s', str(e))
+                        break  # refresh civil timestamps after a clock correction
+
+                    if monotonic_now >= next_frame_time:
+                        total_elapsed = monotonic_now - frame_start_time
+                        self.capture_pre_hook()
+
+                        # The pre-hook may take long enough for maintenance to
+                        # be accepted.  Never start another exposure after the
+                        # stop request has reached this worker.
+                        self._processCaptureControlQueue()
+                        if self._shutdown:
+                            continue
+
+
+                        frame_start_time = time.monotonic()
+
+
+                        if not self.sqm_camera_enable or self.focus_mode:
+                            # Normal exposure
+                            self.shoot(
+                                self._expUtils.EXPOSURE_NEXT,
+                                self._expUtils.GAIN_NEXT,
+                                self._expUtils.BINNING_NEXT,
+                                sync=False,
+                            )
+                        else:
+                            # SQM exposures enabled
+                            if now_time > self.sqm_tasks_time:
+                                if self.astro_av[constants.ASTRO_SUN_ALT] <= -18.0:
+                                    # Only take SQM exposures when in astronomical darkness
+
+                                    # SQM exposure
+                                    logger.warning('SQM exposure triggered')
+                                    self.shoot(
+                                        self._expUtils.EXPOSURE_SQM,
+                                        self._expUtils.GAIN_SQM,
+                                        self._expUtils.BINNING_SQM,
+                                        sync=False,
+                                        sqm_exposure=True,
+                                    )
+
+                                    waiting_for_sqm_frame = True
+                                else:
+                                    # Day
+                                    if self.sqm_camera_enable_day:
+                                        # SQM exposure
+                                        logger.warning('SQM exposure triggered')
+                                        self.shoot(
+                                            self._expUtils.EXPOSURE_SQM,
+                                            self._expUtils.GAIN_SQM,
+                                            self._expUtils.BINNING_SQM,
+                                            sync=False,
+                                            sqm_exposure=True,
+                                        )
+
+                                        waiting_for_sqm_frame = True
+                                    else:
+                                        # Normal exposure during day
+                                        self.shoot(
+                                            self._expUtils.EXPOSURE_NEXT,
+                                            self._expUtils.GAIN_NEXT,
+                                            self._expUtils.BINNING_NEXT,
+                                            sync=False,
+                                        )
+
+
+                                # set next SQM exposure time
+                                self.sqm_tasks_time = now_time + self.sqm_tasks_offset
+                            else:
+                                # Normal exposure
+                                self.shoot(
+                                    self._expUtils.EXPOSURE_NEXT,
+                                    self._expUtils.GAIN_NEXT,
+                                    self._expUtils.BINNING_NEXT,
+                                    sync=False,
+                                )
+
+
+                        camera_ready = False
+                        waiting_for_frame = True
+
+
+                        # if the image queue grows too large, introduce delays to new exposures
+                        image_queue_size = self.image_q.qsize()
+                        if image_queue_size > 0:
+                            logger.warning('Image queue depth: %d', image_queue_size)
+
+
+                        if image_queue_size <= self.image_queue_min:
+                            if self.add_period_delay > 0:
+                                logger.warning('IMAGE QUEUE UNDER MINIMUM: %d *** REMOVING DELAY BETWEEN EXPOSURES ***', image_queue_size)
+                                self.add_period_delay = 0.0
+                        elif image_queue_size >= self.image_queue_max:
+                            if self.night:
+                                self.add_period_delay = (image_queue_size / self.image_queue_max) * self.config['EXPOSURE_PERIOD'] * self.image_queue_backoff
+                            else:
+                                self.add_period_delay = (image_queue_size / self.image_queue_max) * self.config['EXPOSURE_PERIOD_DAY'] * self.image_queue_backoff
+
+                            logger.warning('IMAGE QUEUE MAXIMUM EXCEEDED: %d *** ADDING ADDITIONAL %0.3fs DELAY BETWEEN EXPOSURES ***', image_queue_size, self.add_period_delay)
+
+                            self._miscDb.addNotification(
+                                NotificationCategory.WORKER,
+                                'image_queue_depth',
+                                'Image queue exceeded maximum threshold depth.  System processing might be degraded.',
+                                expire=timedelta(hours=1),
+                            )
+
+
+                        if self.focus_mode:
+                            # Start frame immediately in focus mode
+                            logger.warning('*** FOCUS MODE ENABLED ***')
+                            next_frame_time = frame_start_time + self.config.get('FOCUS_DELAY', 4.0) + self.add_period_delay
+                        elif waiting_for_sqm_frame:
+                            # take next exposure as quickly as possible
+                            next_frame_time = frame_start_time
+                        elif self.night:
+                            next_frame_time = frame_start_time + self.config['EXPOSURE_PERIOD'] + self.add_period_delay
+                        else:
+                            next_frame_time = frame_start_time + self.config['EXPOSURE_PERIOD_DAY'] + self.add_period_delay
+
+                        logger.info('Total time since last exposure %0.4f s', total_elapsed)
+
+
+                loop_elapsed = time.time() - loop_start_time
+                logger.debug('Loop completed in %0.4f s', loop_elapsed)
+
+
+    def _initialize(self):
+        camera_interface = getattr(camera_module, self.config.get('CAMERA_INTERFACE', 'indi'))
+
+
+        # instantiate the client
+        self.indiclient = camera_interface(
+            self.config,
+            CameraImageQueue(self.image_q, self.health),
+            self.position_av,
+            self.exposure_av,
+            self.gain_av,
+            self.binning_av,
+            self.night_av,
+        )
+
+
+        # set indi server localhost and port
+        self.indiclient.setServer(self.config['INDI_SERVER'], self.config['INDI_PORT'])
+
+        # connect to indi server
+        logger.info("Connecting to indiserver")
+        if not self.indiclient.connectServer():
+            host = self.indiclient.getHost()
+            port = self.indiclient.getPort()
+
+            logger.error("No indiserver available at %s:%d", host, port)
+
+            self._miscDb.setState('STATUS', constants.STATUS_NOINDISERVER)
+
+            self._miscDb.addNotification(
+                NotificationCategory.GENERAL,
+                'no_indiserver',
+                'Unable to connect to indiserver at {0:s}:{1:d}'.format(host, port),
+                expire=timedelta(hours=2),
+            )
+
+            raise IndiServerException('indiserver not available')
+
+
+        # give devices a chance to register
+        time.sleep(5)
+
+        try:
+            self.indiclient.findCcd(camera_name=self.config.get('INDI_CAMERA_NAME'))
+        except CameraException as e:
+            logger.error('Camera error: !!! %s !!!', str(e).upper())
+
+            self._miscDb.setState('STATUS', constants.STATUS_NOCAMERA)
+
+            self._miscDb.addNotification(
+                NotificationCategory.CAMERA,
+                'no_camera',
+                'Camera was not detected.',
+                expire=timedelta(hours=2),
+            )
+
+            time.sleep(60)
+            raise
+
+
+        self.indiclient.findTelescope(telescope_name='Telescope Simulator')
+        self.indiclient.findGps()
+
+
+        logger.warning('Connecting to CCD device %s', self.indiclient.ccd_device.getDeviceName())
+        self.indiclient.connectDevice(self.indiclient.ccd_device.getDeviceName())
+
+        if self.indiclient.telescope_device is not None:
+            logger.warning('Connecting to Telescope device %s', self.indiclient.telescope_device.getDeviceName())
+            self.indiclient.connectDevice(self.indiclient.telescope_device.getDeviceName())
+
+        if self.config.get('GPS_ENABLE') and self.indiclient.gps_device is not None:
+            logger.warning('Connecting to GPS device %s', self.indiclient.gps_device.getDeviceName())
+            self.indiclient.connectDevice(self.indiclient.gps_device.getDeviceName())
+
+
+        # add driver name to config
+        self.camera_name = self.indiclient.getIndiAllskyCameraName()  # allow camera to have derived name
+        self._miscDb.setState('CAMERA_NAME', self.camera_name)
+
+        self.camera_server = self.indiclient.ccd_device.getDriverExec()
+        self._miscDb.setState('CAMERA_SERVER', self.camera_server)
+
+
+        ### GPS config
+        if self.config.get('GPS_ENABLE') and self.indiclient.gps_device is not None:
+            gps_config = {
+                'PROPERTIES' : {
+                    'GPS_REFRESH_PERIOD' : {
+                        'PERIOD' : 293,  # prime number
+                    },
+                },
+            }
+
+
+            try:
+                self.indiclient.configureGpsDevice(gps_config)
+                self.indiclient.refreshGps()
+            except TimeOutException as e:
+                logger.error('GPS Device configuration failed: %s', str(e))
+
+
+            # GPSD simulation
+            #sim_gps_config = {
+            #    'SWITCHES' : {
+            #        'SIMULATION' : {
+            #            'on'  : ['ENABLE'],
+            #            'off' : ['DISABLE'],
+            #        },
+            #    },
+            #    'PROPERTIES' : {
+            #        'SIM_GEOGRAPHIC_COORD' : {  # rio
+            #            'SIM_LAT'  : -22,  # requires integers
+            #            'SIM_LONG' : 317,
+            #            'SIM_ELEV' : 7,
+            #        },
+            #    },
+            #}
+
+            #self.indiclient.configureGpsDevice(sim_gps_config)
+
+
+
+        ### Telescope config
+        # park the telescope at zenith and stop tracking
+        if self.indiclient.telescope_device is not None:
+            telescope_config = {
+                'SWITCHES' : {
+                    'TELESCOPE_TRACK_STATE' : {
+                        'on'  : ['TRACK_OFF'],
+                        'off' : ['TRACK_ON'],
+                    },
+                },
+                'PROPERTIES' : {
+                    'GEOGRAPHIC_COORD' : {
+                        'LAT' : float(self.position_av[constants.POSITION_LATITUDE]),
+                        'LONG' : float(self.position_av[constants.POSITION_LONGITUDE]),
+                    },
+                },
+            }
+
+            self.indiclient.configureTelescopeDevice(telescope_config)
+
+            self.reparkTelescope()
+
+
+        if self.config.get('GPS_ENABLE'):
+            if self.indiclient.telescope_device is not None and self.indiclient.gps_device is not None:
+                # Set Telescope GPS
+                self.indiclient.setTelescopeGps(self.indiclient.gps_device.getDeviceName())
+
+
+        # configuration needs to be performed before getting CCD_INFO
+        self.indiclient.configureCcdDevice(self.indi_config)  # night config by default
+
+
+        # Get Properties
+        #ccd_properties = self.indiclient.getCcdDeviceProperties()
+
+
+        # get CCD information
+        ccd_info = self.indiclient.getCcdInfo()
+
+
+        if self.config.get('CFA_PATTERN'):
+            cfa_pattern = self.config['CFA_PATTERN']
+        else:
+            cfa_pattern = ccd_info['CCD_CFA'].get('CFA_TYPE', {}).get('text')
+
+
+        # populate S3 data
+        s3_data = {
+            'host'      : self.config['S3UPLOAD'].get('HOST', ''),
+            'bucket'    : self.config['S3UPLOAD'].get('BUCKET', ''),
+            'region'    : self.config['S3UPLOAD'].get('REGION', ''),
+            'namespace' : self.config['S3UPLOAD'].get('NAMESPACE', ''),
+        }
+
+
+        try:
+            s3_prefix = self.config['S3UPLOAD']['URL_TEMPLATE'].format(**s3_data)
+        except KeyError as e:
+            app.logger.error('Failure to generate S3 prefix: %s', str(e))
+            s3_prefix = ''
+        except ValueError as e:
+            app.logger.error('Failure to generate S3 prefix: %s', str(e))
+            s3_prefix = ''
+
+
+        now = datetime.now()
+
+        # need to get camera info before adding to DB
+        camera_metadata = {
+            'type'        : constants.CAMERA,
+            'name'        : self.camera_name,
+            'driver'      : self.camera_server,
+            'serialNumber': ccd_info.get('SERIALNUMBER_INFO', {}).get('text'),
+
+            'hidden'      : False,  # unhide camera
+
+            'minExposure' : float(ccd_info.get('CCD_EXPOSURE', {}).get('CCD_EXPOSURE_VALUE', {}).get('min')),
+            'maxExposure' : float(ccd_info.get('CCD_EXPOSURE', {}).get('CCD_EXPOSURE_VALUE', {}).get('max')),
+            'minGain'     : float(ccd_info.get('GAIN_INFO', {}).get('min')),
+            'maxGain'     : float(ccd_info.get('GAIN_INFO', {}).get('max')),
+            'minBinning'  : int(ccd_info.get('BINNING_INFO', {}).get('min')),
+            'maxBinning'  : int(ccd_info.get('BINNING_INFO', {}).get('max')),
+
+            'width'       : int(ccd_info.get('CCD_FRAME', {}).get('WIDTH', {}).get('max')),
+            'height'      : int(ccd_info.get('CCD_FRAME', {}).get('HEIGHT', {}).get('max')),
+            'bits'        : int(ccd_info.get('CCD_INFO', {}).get('CCD_BITSPERPIXEL', {}).get('current')),
+            'pixelSize'   : float(ccd_info.get('CCD_INFO', {}).get('CCD_PIXEL_SIZE', {}).get('current')),
+            'cfa'         : constants.CFA_STR_MAP[cfa_pattern],
+
+            'location'    : self.config['LOCATION_NAME'],
+            'latitude'    : float(self.position_av[constants.POSITION_LATITUDE]),
+            'longitude'   : float(self.position_av[constants.POSITION_LONGITUDE]),
+            'elevation'   : int(self.position_av[constants.POSITION_ELEVATION]),
+
+            'tz'          : str(now.astimezone().tzinfo),
+            'utc_offset'  : now.astimezone().utcoffset().total_seconds(),
+
+            'owner'           : self.config['OWNER'],
+            'lensName'        : self.config['LENS_NAME'],
+            'lensFocalLength' : self.config['LENS_FOCAL_LENGTH'],
+            'lensFocalRatio'  : self.config['LENS_FOCAL_RATIO'],
+            'lensImageCircle' : self.config['LENS_IMAGE_CIRCLE'],
+            'lensOffsetX'     : self.config.get('LENS_OFFSET_X', 0),
+            'lensOffsetY'     : self.config.get('LENS_OFFSET_Y', 0),
+
+            'alt'             : self.config['LENS_ALTITUDE'],
+            'az'              : self.config['LENS_AZIMUTH'],
+            'nightSunAlt'     : self.config['NIGHT_SUN_ALT_DEG'],
+
+            'daytime_capture'       : self.config.get('DAYTIME_CAPTURE', True),
+            'daytime_capture_save'  : self.config.get('DAYTIME_CAPTURE_SAVE', True),
+            'daytime_timelapse'     : self.config.get('DAYTIME_TIMELAPSE', True),
+            'capture_pause'         : self.config.get('CAPTURE_PAUSE', False),
+
+            's3_prefix'             : s3_prefix,
+            'web_nonlocal_images'   : self.config.get('WEB_NONLOCAL_IMAGES', False),
+            'web_local_images_admin': self.config.get('WEB_LOCAL_IMAGES_ADMIN', False),
+
+            'data'                  : {
+                # Keep the most recently detected device identity distinct
+                # from friendly labels and historical aliases. Camera-specific
+                # tools use this value as their authoritative persisted gate.
+                'detected_name': self.camera_name,
+            },
+        }
+
+
+        camera_capabilities = CameraCapabilities.from_ccd_info(ccd_info)
+        effective_capture_state = build_effective_capture_state(self.config, camera_capabilities)
+        camera_metadata['data']['camera_capabilities'] = camera_capabilities.to_dict()
+        camera_metadata['data']['effective_capture_state'] = effective_capture_state.to_dict()
+
+
+        # virtualsky
+        camera_metadata['data']['vs_pointing_azimuth'] = self.config.get('VIRTUALSKY', {}).get('POINTING_AZIMUTH', 0.0)
+        calibration = self.config.get('VIRTUALSKY', {}).get('CALIBRATION')
+        calibration_enabled = self.config.get('VIRTUALSKY', {}).get('CALIBRATION_ENABLED', False)
+        if calibration and calibration_enabled:
+            # A changed crop/rotation/scale invalidates the learned pixel mapping.
+            from .lens_solver.calibration import pipelineSignature
+            calibration_enabled = calibration.get('pipeline') == pipelineSignature(self.config)
+        camera_metadata['data']['vs_calibration'] = calibration
+        camera_metadata['data']['vs_calibration_enabled'] = calibration_enabled
+        camera_metadata['data']['vs_precession'] = self.config.get('VIRTUALSKY', {}).get('PRECESSION', False)
+        camera_metadata['data']['vs_radial_distortion'] = self.config.get('VIRTUALSKY', {}).get('RADIAL_DISTORTION', 0.0)
+        camera_metadata['data']['vs_magnitude'] = self.config.get('VIRTUALSKY', {}).get('MAGNITUDE', 6.0)
+        camera_metadata['data']['vs_constellations'] = self.config.get('VIRTUALSKY', {}).get('CONSTELLATIONS', True)
+        camera_metadata['data']['vs_constellationlabels'] = self.config.get('VIRTUALSKY', {}).get('CONSTELLATIONLABELS', False)
+        camera_metadata['data']['vs_showstars'] = self.config.get('VIRTUALSKY', {}).get('SHOWSTARS', True)
+        camera_metadata['data']['vs_showstarlabels'] = self.config.get('VIRTUALSKY', {}).get('SHOWSTARLABELS', True)
+        camera_metadata['data']['vs_showplanets'] = self.config.get('VIRTUALSKY', {}).get('SHOWPLANETS', True)
+        camera_metadata['data']['vs_showplanetlabels'] = self.config.get('VIRTUALSKY', {}).get('SHOWPLANETLABELS', True)
+
+        camera_metadata['data']['vs_image_circle_diameter'] = self.config.get('VIRTUALSKY', {}).get('IMAGE_CIRCLE_DIAMETER', 3500)
+        camera_metadata['data']['vs_latitude_offset'] = self.config.get('VIRTUALSKY', {}).get('LATITUDE_OFFSET', 0.0)
+        camera_metadata['data']['vs_longitude_offset'] = self.config.get('VIRTUALSKY', {}).get('LONGITUDE_OFFSET', 0.0)
+        camera_metadata['data']['vs_offset_x'] = self.config.get('VIRTUALSKY', {}).get('OFFSET_X', 0)
+        camera_metadata['data']['vs_offset_y'] = self.config.get('VIRTUALSKY', {}).get('OFFSET_Y', 0)
+
+        # Overlay orientation does not alter the captured image.
+        camera_metadata['data']['vs_flip_h'] = self.config.get('VIRTUALSKY', {}).get('FLIP_H', False)
+        camera_metadata['data']['vs_flip_v'] = self.config.get('VIRTUALSKY', {}).get('FLIP_V', False)
+
+
+        self.update_sensor_slot_labels()
+
+
+        for k, v in self.SENSOR_SLOTS:
+            camera_metadata['data'][k] = v
+
+
+        # Charts
+        from .charts import chart_metadata
+
+        camera_metadata['data'].update(chart_metadata(self.config))
+
+
+        try:
+            camera = self._miscDb.addCamera(camera_metadata)
+        except MultipleResultsFound:
+            logger.error('!!! MULTIPLE CAMERAS WITH SAME NAME (%s) !!!', camera_metadata['name'])
+
+            self._miscDb.setState('STATUS', constants.STATUS_CAMERAERROR)
+
+            self._miscDb.addNotification(
+                NotificationCategory.CAMERA,
+                'camera_name',
+                'Multiple cameras defined with same name ({0:s})'.format(camera_metadata['name']),
+                expire=timedelta(hours=2),
+            )
+
+            time.sleep(60)
+            raise
+
+
+
+        self.camera_id = camera.id
+        self.indiclient.camera_id = camera.id
+
+        self._miscDb.setState('DB_CAMERA_ID', camera.id)
+
+
+        self._sync_camera(camera, camera_metadata)
+
+
+        try:
+            # Disable debugging
+            self.indiclient.disableDebugCcd()
+        except TimeOutException:
+            logger.warning('Camera does not support debug')
+
+
+        # set BLOB mode to BLOB_ALSO
+        self.indiclient.updateCcdBlobMode()
+
+
+        try:
+            self.indiclient.setCcdFrameType('FRAME_LIGHT')  # default frame type is light
+        except TimeOutException:
+            # this is an optional step
+            # occasionally the CCD_FRAME_TYPE property is not available during initialization
+            logger.warning('Unable to set CCD_FRAME_TYPE to Light')
+
+
+        try:
+            self.indiclient.setCcdScopeInfo(camera.lensFocalLength, camera.lensFocalRatio)
+        except TimeOutException:
+            logger.warning('Unable to set SCOPE_INFO')
+
+
+        # save config to defaults (disabled)
+        #self.indiclient.saveCcdConfig()
+
+
+        # set exposure limits
+        # prevent python/C float conversion errors
+        ccd_min_exp = math.ceil(float(ccd_info['CCD_EXPOSURE']['CCD_EXPOSURE_VALUE']['min']) * 1000000) / 1000000
+        ccd_max_exp = math.floor(float(ccd_info['CCD_EXPOSURE']['CCD_EXPOSURE_VALUE']['max']) * 1000000) / 1000000
+
+
+        #ccd_min_exp = float(ccd_info['CCD_EXPOSURE']['CCD_EXPOSURE_VALUE']['min'])
+
+        # Some CCD drivers will not accept their stated minimum exposure.
+        # There might be some python -> C floating point conversion problem causing this.
+        #ccd_min_exp += 0.00000001
+
+
+        config_exposure_min_day = math.ceil(float(self.config.get('CCD_EXPOSURE_MIN_DAY', 0.0) * 1000000)) / 1000000
+        config_exposure_min = math.ceil(float(self.config.get('CCD_EXPOSURE_MIN', 0.0) * 1000000)) / 1000000
+        config_exposure_max = math.floor(float(self.config.get('CCD_EXPOSURE_MAX', 15.0) * 1000000)) / 1000000
+        config_sqm_exposure = math.floor(float(self.config.get('CAMERA_SQM', {}).get('EXPOSURE', 10.0) * 1000000)) / 1000000
+
+
+        if not config_exposure_min_day:
+            self._expUtils.EXPOSURE_MIN_DAY = ccd_min_exp
+        elif config_exposure_min_day < ccd_min_exp:
+            logger.warning(
+                'Minimum exposure (day) %0.6f too low, increasing to %0.6f',
+                config_exposure_min_day,
+                ccd_min_exp,
+            )
+            self._expUtils.EXPOSURE_MIN_DAY = ccd_min_exp
+        else:
+            self._expUtils.EXPOSURE_MIN_DAY = config_exposure_min_day
+
+        logger.info('Minimum CCD exposure: %0.6f (day)', self._expUtils.EXPOSURE_MIN_DAY)
+
+
+        if not config_exposure_min:
+            self._expUtils.EXPOSURE_MIN_NIGHT = ccd_min_exp
+        elif config_exposure_min < ccd_min_exp:
+            logger.warning(
+                'Minimum exposure (night) %0.6f too low, increasing to %0.6f',
+                config_exposure_min,
+                ccd_min_exp,
+            )
+            self._expUtils.EXPOSURE_MIN_NIGHT = ccd_min_exp
+        else:
+            self._expUtils.EXPOSURE_MIN_NIGHT = config_exposure_min
+
+        logger.info('Minimum CCD exposure: %0.6f (night)', self._expUtils.EXPOSURE_MIN_NIGHT)
+
+
+        if config_exposure_max > ccd_max_exp:
+            logger.warning(
+                'Maximum exposure %0.6f too high, decreasing to %0.6f',
+                config_exposure_max,
+                ccd_max_exp,
+            )
+
+            maximum_exposure = ccd_max_exp
+        else:
+            maximum_exposure = config_exposure_max
+
+
+        self._expUtils.EXPOSURE_MAX = maximum_exposure
+        logger.info('Maximum CCD exposure: %0.6f', self._expUtils.EXPOSURE_MAX)
+
+
+        # set SQM exposure
+        if config_sqm_exposure < ccd_min_exp:
+            logger.warning(
+                'SQM exposure %0.6f too low, increasing to %0.6f',
+                config_sqm_exposure,
+                ccd_min_exp,
+            )
+
+            sqm_exposure = ccd_min_exp
+
+        elif config_sqm_exposure > ccd_max_exp:
+            logger.warning(
+                'SQM exposure %0.6f too high, decreasing to %0.6f',
+                config_sqm_exposure,
+                ccd_max_exp,
+            )
+
+            sqm_exposure = ccd_max_exp
+        else:
+            sqm_exposure = config_sqm_exposure
+
+
+        self._expUtils.EXPOSURE_SQM = sqm_exposure
+        logger.info('SQM CCD exposure: %0.6f', self._expUtils.EXPOSURE_SQM)
+
+
+        ### Validate gain settings
+        # prevent python/C float conversion errors
+        ccd_min_gain = math.ceil(float(ccd_info['GAIN_INFO']['min']) * 1000) / 1000  # round up the thousands spot
+        ccd_max_gain = math.floor(float(ccd_info['GAIN_INFO']['max']) * 1000) / 1000  # round down
+
+        config_night_gain = math.floor(float(self.config['CCD_CONFIG']['NIGHT']['GAIN']) * 1000) / 1000
+        config_moonmode_gain = math.floor(float(self.config['CCD_CONFIG']['MOONMODE']['GAIN']) * 1000) / 1000
+        config_day_gain = math.ceil(float(self.config['CCD_CONFIG']['DAY']['GAIN']) * 1000) / 1000
+        config_sqm_gain = math.floor(float(self.config.get('CAMERA_SQM', {}).get('GAIN', 10.0)) * 1000) / 1000
+
+
+        if config_night_gain < ccd_min_gain:
+            logger.error('CCD night gain below minimum, changing to %0.3f', ccd_min_gain)
+            gain_night = ccd_min_gain
+            time.sleep(3)
+        elif config_night_gain > ccd_max_gain:
+            logger.error('CCD night gain above maximum, changing to %0.3f', ccd_max_gain)
+            gain_night = ccd_max_gain
+            time.sleep(3)
+        else:
+            gain_night = config_night_gain
+
+
+        if config_moonmode_gain < ccd_min_gain:
+            logger.error('CCD moon mode gain below minimum, changing to %0.3f', ccd_min_gain)
+            gain_moonmode = ccd_min_gain
+            time.sleep(3)
+        elif config_moonmode_gain > ccd_max_gain:
+            logger.error('CCD moon mode gain above maximum, changing to %0.3f', ccd_max_gain)
+            gain_moonmode = ccd_max_gain
+            time.sleep(3)
+        else:
+            gain_moonmode = config_moonmode_gain
+
+
+        if config_day_gain < ccd_min_gain:
+            logger.error('CCD day gain below minimum, changing to %0.3f', ccd_min_gain)
+            gain_day = ccd_min_gain
+            time.sleep(3)
+        elif config_day_gain > ccd_max_gain:
+            logger.error('CCD day gain above maximum, changing to %0.3f', ccd_max_gain)
+            gain_day = ccd_max_gain
+            time.sleep(3)
+        else:
+            gain_day = config_day_gain
+
+
+        if config_sqm_gain < ccd_min_gain:
+            logger.error('CCD sqm gain below minimum, changing to %0.3f', ccd_min_gain)
+            gain_sqm = ccd_min_gain
+            time.sleep(3)
+        elif config_sqm_gain > ccd_max_gain:
+            logger.error('CCD sqm gain above maximum, changing to %0.3f', ccd_max_gain)
+            gain_sqm = ccd_max_gain
+            time.sleep(3)
+        else:
+            gain_sqm = config_sqm_gain
+
+
+        gain_normalizer = CameraCapabilities.from_ccd_info(ccd_info).snap_gain
+        gain_night, gain_moonmode, gain_day, gain_sqm = map(
+            gain_normalizer, (gain_night, gain_moonmode, gain_day, gain_sqm),
+        )
+
+        # Validate binning settings
+        ccd_min_binning = int(ccd_info['BINNING_INFO']['min'])
+        ccd_max_binning = int(ccd_info['BINNING_INFO']['max'])
+
+
+        if self.config['CCD_CONFIG']['NIGHT']['BINNING'] < ccd_min_binning:
+            logger.error('CCD night binning below minimum, changing to %d', ccd_min_binning)
+            binning_night = ccd_min_binning
+            time.sleep(3)
+        elif self.config['CCD_CONFIG']['NIGHT']['BINNING'] > ccd_max_binning:
+            logger.error('CCD night binning above maximum, changing to %d', ccd_max_binning)
+            binning_night = ccd_max_binning
+            time.sleep(3)
+        else:
+            binning_night = int(self.config['CCD_CONFIG']['NIGHT']['BINNING'])
+
+
+        if self.config['CCD_CONFIG']['MOONMODE']['BINNING'] < ccd_min_binning:
+            logger.error('CCD moonmode binning below minimum, changing to %d', ccd_min_binning)
+            binning_moonmode = ccd_min_binning
+            time.sleep(3)
+        elif self.config['CCD_CONFIG']['MOONMODE']['BINNING'] > ccd_max_binning:
+            logger.error('CCD moonmode binning above maximum, changing to %d', ccd_max_binning)
+            binning_moonmode = ccd_max_binning
+            time.sleep(3)
+        else:
+            binning_moonmode = int(self.config['CCD_CONFIG']['MOONMODE']['BINNING'])
+
+
+        if self.config['CCD_CONFIG']['DAY']['BINNING'] < ccd_min_binning:
+            logger.error('CCD day binning below minimum, changing to %d', ccd_min_binning)
+            binning_day = ccd_min_binning
+            time.sleep(3)
+        elif self.config['CCD_CONFIG']['DAY']['BINNING'] > ccd_max_binning:
+            logger.error('CCD day binning above maximum, changing to %d', ccd_max_binning)
+            binning_day = ccd_max_binning
+            time.sleep(3)
+        else:
+            binning_day = int(self.config['CCD_CONFIG']['DAY']['BINNING'])
+
+
+        if self.config.get('CAMERA_SQM', {}).get('BINNING', 1) < ccd_min_binning:
+            logger.error('CCD sqm binning below minimum, changing to %d', ccd_min_binning)
+            binning_sqm = ccd_min_binning
+            time.sleep(3)
+        elif self.config.get('CAMERA_SQM', {}).get('BINNING', 1) > ccd_max_binning:
+            logger.error('CCD sqm binning above maximum, changing to %d', ccd_max_binning)
+            binning_sqm = ccd_max_binning
+            time.sleep(3)
+        else:
+            binning_sqm = int(self.config.get('CAMERA_SQM', {}).get('BINNING', 1))
+
+
+
+        exposure_class_str = self.config.get('CCD_CONFIG', {}).get('EXPOSURE_CLASSNAME', 'exposure_basic')
+
+
+        config_exposure_def = math.ceil(float(self.config.get('CCD_EXPOSURE_DEF', 0.0)) * 1000000) / 1000000
+
+        # set default exposure, gain
+        if config_exposure_def:
+            ccd_exposure_default = config_exposure_def
+
+            if self.night_av[constants.NIGHT_NIGHT]:
+                if self.night_av[constants.NIGHT_MOONMODE]:
+                    ccd_gain_default = gain_moonmode
+                    ccd_binning_default = binning_moonmode
+                else:
+                    ccd_gain_default = gain_night
+                    ccd_binning_default = binning_night
+            else:
+                ccd_gain_default = gain_day
+                ccd_binning_default = binning_day
+
+        else:
+            # use last exposure value within 15 minutes
+            now_minus_15min = datetime.now() - timedelta(minutes=15)
+
+            last_image = IndiAllSkyDbImageTable.query\
+                .join(IndiAllSkyDbImageTable.camera)\
+                .filter(IndiAllSkyDbCameraTable.id == self.camera_id)\
+                .filter(IndiAllSkyDbImageTable.createDate > now_minus_15min)\
+                .order_by(IndiAllSkyDbImageTable.createDate.desc())\
+                .first()
+
+
+            if last_image:
+                ccd_exposure_default = float(last_image.exposure)
+                ccd_gain_default = float(last_image.gain)
+                ccd_binning_default = float(last_image.binmode)
+                logger.warning('Reusing last stable exposure: %0.6f, gain %0.3f, bin %d', ccd_exposure_default, ccd_gain_default, ccd_binning_default)
+
+                # restore last sqm value
+                last_camera_sqm_mag = last_image.data.get('sensor_user_8', 0.0)
+                last_camera_sqm_adu = last_image.data.get('sensor_user_9', 0.0)
+
+
+                if (
+                        last_image.temp is not None
+                        and math.isfinite(float(last_image.temp))
+                        and -100.0 <= float(last_image.temp) <= 100.0
+                ):
+                    # some cameras only report temperature after taking an exposure
+                    # seed the temperature before an exposure is taken
+                    self.indiclient.ccd_temp = last_image.temp
+
+
+                with self.sensors_user_av.get_lock():
+                    self.sensors_user_av[constants.SENSOR_USER_CAMERA_SQM_MAG] = float(last_camera_sqm_mag)
+                    self.sensors_user_av[constants.SENSOR_USER_CAMERA_SQM_ADU] = float(last_camera_sqm_adu)
+
+            else:
+                #ccd_exposure_default = self._expUtils.EXPOSURE_MIN_NIGHT
+                ccd_exposure_default = 0.01  # this should give better results for many cameras
+
+
+                # gain
+                if exposure_class_str == 'exposure_basic':
+                    if self.night_av[constants.NIGHT_NIGHT]:
+                        if self.night_av[constants.NIGHT_MOONMODE]:
+                            ccd_gain_default = gain_moonmode
+                        else:
+                            ccd_gain_default = gain_night
+                    else:
+                        ccd_gain_default = gain_day
+                else:
+                    # auto-gain
+                    ccd_gain_default = gain_day
+
+
+                # binning
+                if self.night_av[constants.NIGHT_NIGHT]:
+                    if self.night_av[constants.NIGHT_MOONMODE]:
+                        ccd_binning_default = binning_moonmode
+                    else:
+                        ccd_binning_default = binning_night
+                else:
+                    ccd_binning_default = binning_day
+
+
+        # sanity check
+        if ccd_exposure_default > maximum_exposure:
+            ccd_exposure_default = maximum_exposure
+        if ccd_exposure_default < ccd_min_exp:
+            ccd_exposure_default = ccd_min_exp
+
+
+        # sanity check
+        if ccd_gain_default > gain_night:
+            ccd_gain_default = gain_night
+        if ccd_gain_default < gain_day:
+            ccd_exposure_default = gain_day
+
+
+        if self._expUtils.EXPOSURE_CURRENT < 0:
+            # only set this on first start
+            self._expUtils.EXPOSURE_CURRENT = ccd_exposure_default
+            self._expUtils.EXPOSURE_NEXT = ccd_exposure_default
+            self._expUtils.EXPOSURE_DELTA = 0.0
+
+
+        logger.info('Default CCD exposure: %0.6f', ccd_exposure_default)
+
+
+        ccd_gain_default = gain_normalizer(ccd_gain_default)
+        self._expUtils.GAIN_CURRENT = ccd_gain_default
+        self._expUtils.GAIN_NEXT = ccd_gain_default
+
+        self._expUtils.GAIN_MAX_NIGHT = gain_night
+        self._expUtils.GAIN_MAX_MOONMODE = gain_moonmode
+
+        # day is always lowest gain
+        self._expUtils.GAIN_MAX_DAY = gain_day
+        self._expUtils.GAIN_MIN_DAY = gain_day
+
+        self._expUtils.GAIN_SQM = gain_sqm
+
+        if exposure_class_str == 'exposure_basic':
+            self._expUtils.GAIN_MIN_NIGHT = gain_night
+            self._expUtils.GAIN_MIN_MOONMODE = gain_moonmode
+        else:
+            # auto-gain
+            self._expUtils.GAIN_MIN_NIGHT = gain_day
+            self._expUtils.GAIN_MIN_MOONMODE = gain_day
+
+
+        logger.info('Minimum CCD gain: %0.3f (day)', self._expUtils.GAIN_MIN_DAY)
+        logger.info('Maximum CCD gain: %0.3f (day)', self._expUtils.GAIN_MAX_DAY)
+        logger.info('Minimum CCD gain: %0.3f (night)', self._expUtils.GAIN_MIN_NIGHT)
+        logger.info('Maximum CCD gain: %0.3f (night)', self._expUtils.GAIN_MAX_NIGHT)
+        logger.info('Minimum CCD gain: %0.3f (moonmode)', self._expUtils.GAIN_MIN_MOONMODE)
+        logger.info('Maximum CCD gain: %0.3f (moonmode)', self._expUtils.GAIN_MAX_MOONMODE)
+        logger.info('SQM CCD gain: %0.3f', self._expUtils.GAIN_SQM)
+        logger.info('Default CCD gain: %0.3f', ccd_gain_default)
+
+
+        self._expUtils.BINNING_CURRENT = ccd_binning_default
+        self._expUtils.BINNING_NEXT = ccd_binning_default
+        self._expUtils.BINNING_DAY = binning_day
+        self._expUtils.BINNING_NIGHT = binning_night
+        self._expUtils.BINNING_MOONMODE = binning_moonmode
+        self._expUtils.BINNING_SQM = binning_sqm
+
+
+        logger.info('CCD binning: %d (day)', self._expUtils.BINNING_DAY)
+        logger.info('CCD binning: %d (night)', self._expUtils.BINNING_NIGHT)
+        logger.info('CCD binning: %d (moonmode)', self._expUtils.BINNING_MOONMODE)
+        logger.info('CCD binning: %d (SQM)', self._expUtils.BINNING_SQM)
+
+
+    def _sync_camera(self, camera, camera_metadata):
+        ### sync camera
+        from .syncapi import automatic_sync_enabled
+        if not automatic_sync_enabled(self.config):
+            return
+
+
+        camera_metadata['uuid'] = camera.uuid
+
+        # tell worker to upload file
+        jobdata = {
+            'action'      : constants.TRANSFER_SYNC_V1,
+            'model'       : camera.__class__.__name__,
+            'id'          : camera.id,
+            'metadata'    : camera_metadata,
+        }
+
+        upload_task = IndiAllSkyDbTaskQueueTable(
+            queue=TaskQueueQueue.UPLOAD,
+            state=TaskQueueState.QUEUED,
+            data=jobdata,
+        )
+        db.session.add(upload_task)
+        db.session.commit()
+
+        self.upload_q.put({'task_id' : upload_task.id})
+
+
+    def _pre_run_tasks(self):
+        # Tasks that need to be run before the main program loop
+
+        # Publish a fresh heartbeat with the running state.  A restarted capture
+        # worker may otherwise inherit a watchdog timestamp that expired while a
+        # supervised maintenance task had the camera stopped.
+        self._miscDb.setState('WATCHDOG', int(time.time()))
+        self._miscDb.setState('STATUS', constants.STATUS_RUNNING)
+
+        if self.camera_server in ['indi_rpicam']:
+            # Raspberry PI HQ Camera requires an initial throw away exposure of over 6s
+            # in order to take exposures longer than 7s
+            logger.info('Taking throw away exposure for rpicam')
+            self.shoot(7.0, self._expUtils.GAIN_MIN, sync=True, timeout=20.0)
+
+
+    def _periodic_tasks(self):
+        # Tasks that need to be run periodically
+        now_time = time.time()
+
+        # set next reconfigure time
+        self.periodic_tasks_time = now_time + self.periodic_tasks_offset
+
+        logger.warning('Periodic tasks triggered')
+
+
+        # Update watchdog
+        self._miscDb.setState('WATCHDOG', int(now_time))
+
+
+        if self.camera_server in ['indi_asi_ccd']:
+            # There is a bug in the ASI120M* camera that causes exposures to fail on gain changes
+            # The indi_asi_ccd server will switch the camera to 8-bit mode to try to correct
+            if self.camera_name.startswith('ZWO CCD ASI120'):
+                self.indiclient.configureCcdDevice(self.indi_config)
+        elif self.camera_server in ['indi_asi_single_ccd']:
+            if self.camera_name.startswith('ZWO ASI120'):
+                self.indiclient.configureCcdDevice(self.indi_config)
+
+
+    def getCcdTemperature(self):
+        temp_c = self.indiclient.getCcdTemperature()
+
+
+        # Preserve a real camera reading. The external script is a fallback for
+        # cameras and interfaces that do not report a usable temperature.
+        if temp_c < -100.0 and self.config.get('CCD_TEMP_SCRIPT'):
+            try:
+                ext_temp_c = self.getExternalTemperature(self.config.get('CCD_TEMP_SCRIPT'))
+                temp_c = ext_temp_c
+            except TemperatureException as e:
+                logger.error('Exception querying external temperature: %s', str(e))
+
+
+        temp_c_float = float(temp_c)
+
+
+        with self.sensors_temp_av.get_lock():
+            self.sensors_temp_av[constants.SENSOR_TEMP_CCD_TEMP] = temp_c_float
+
+        with self.sensors_user_av.get_lock():
+            if self.config.get('TEMP_DISPLAY') == 'f':
+                self.sensors_user_av[constants.SENSOR_USER_CCD_TEMP] = (temp_c_float * 9.0 / 5.0) + 32
+            elif self.config.get('TEMP_DISPLAY') == 'k':
+                self.sensors_user_av[constants.SENSOR_USER_CCD_TEMP] = temp_c_float + 273.15
+            else:
+                self.sensors_user_av[constants.SENSOR_USER_CCD_TEMP] = temp_c_float
+
+
+        return temp_c_float
+
+
+    def getExternalTemperature(self, script_path):
+        temp_script_p = Path(script_path)
+
+        logger.info('Running external script for temperature: %s', temp_script_p)
+
+        # need to be extra careful running in the main thread
+        if not temp_script_p.is_file():
+            raise TemperatureException('Temperature script is not a file')
+
+        if temp_script_p.stat().st_size == 0:
+            raise TemperatureException('Temperature script is empty')
+
+        if not os.access(str(temp_script_p), os.R_OK | os.X_OK):
+            raise TemperatureException('Temperature script is not readable or executable')
+
+
+        # generate a tempfile for the data
+        f_tmp_tempjson = tempfile.NamedTemporaryFile(mode='w', delete=True, suffix='.json')
+        f_tmp_tempjson.close()
+
+        tempjson_name_p = Path(f_tmp_tempjson.name)
+
+
+        cmd = [
+            str(temp_script_p),
+        ]
+
+
+        # the file used for the json data is communicated via environment variable
+        cmd_env = {
+            'TEMP_JSON' : str(tempjson_name_p),
+        }
+
+
+        try:
+            temp_process = subprocess.Popen(
+                cmd,
+                env=cmd_env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            raise TemperatureException('Temperature script failed to execute')
+
+
+        try:
+            temp_process.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            for _ in range(5):
+                if not self._processRunning(temp_process):
+                    break
+
+                temp_process.terminate()
+                time.sleep(0.25)
+                continue
+
+
+            if self._processRunning(temp_process):
+                logger.error('Killing temperature script')
+                temp_process.kill()
+                temp_process.poll()  # close out process
+
+
+            try:
+                tempjson_name_p.unlink()
+            except FileNotFoundError:
+                pass
+            except PermissionError as e:
+                logger.error('Unable to delete temp file: %s', str(e))
+
+
+            raise TemperatureException('Temperature script timed out')
+
+
+        #stdout, stderr = temp_process.communicate()
+
+
+        if temp_process.returncode != 0:
+            try:
+                tempjson_name_p.unlink()
+            except FileNotFoundError:
+                pass
+            except PermissionError:
+                pass
+
+
+            raise TemperatureException('Temperature script returned exited abnormally')
+
+
+        try:
+            with io.open(str(tempjson_name_p), 'r', encoding='utf-8') as tempjson_name_f:
+                temp_data = json.load(tempjson_name_f)
+
+            tempjson_name_p.unlink()
+        except json.JSONDecodeError as e:
+            logger.error('Error decoding json: %s', str(e))
+            tempjson_name_p.unlink()
+            raise TemperatureException(str(e))
+        except PermissionError as e:
+            # cannot delete file
+            logger.error(str(e))
+            raise TemperatureException(str(e))
+        except FileNotFoundError as e:
+            raise TemperatureException(str(e))
+
+
+        try:
+            temp_float = float(temp_data['temp'])
+        except ValueError:
+            raise TemperatureException('Temperature script returned a non-numerical value')
+        except KeyError:
+            raise TemperatureException('Temperature script returned incorrect data')
+
+
+        return temp_float
+
+
+    def capture_pre_hook(self):
+        if not self.config.get('CAPTURE_HOOK_PRE'):
+            return
+
+        pre_capture_hook_p = Path(self.config.get('CAPTURE_HOOK_PRE'))
+
+        logger.info('Running pre-capture hook: %s', pre_capture_hook_p)
+
+        # need to be extra careful running in the main thread
+        if not pre_capture_hook_p.is_file():
+            logger.error('Pre-capture script is not a file')
+            return
+
+        if pre_capture_hook_p.stat().st_size == 0:
+            logger.error('Pre-capture script is empty')
+            return
+
+        if not os.access(str(pre_capture_hook_p), os.R_OK | os.X_OK):
+            logger.error('Pre-capture script is not readable or executable')
+            return
+
+
+        # Communicate sensor values as environment variables
+        cmd_env = {
+            'GAIN'     : '{0:0.3f}'.format(self._expUtils.GAIN_CURRENT),
+            'BIN'      : '{0:d}'.format(self._expUtils.BINNING_CURRENT),
+            'MOONMODE' : '{0:d}'.format(int(bool(self.night_av[constants.NIGHT_MOONMODE]))),
+            'NIGHT'    : '{0:d}'.format(int(self.night_av[constants.NIGHT_NIGHT])),
+            'LATITUDE' : '{0:0.3f}'.format(self.position_av[constants.POSITION_LATITUDE]),
+            'LONGITUDE': '{0:0.3f}'.format(self.position_av[constants.POSITION_LONGITUDE]),
+            'ELEVATION': '{0:d}'.format(int(self.position_av[constants.POSITION_ELEVATION])),
+        }
+
+
+        # system temp sensors
+        for i in range(60):
+            sensor_temp_env_var = 'SENSOR_TEMP_{0:d}'.format(i)
+            cmd_env[sensor_temp_env_var] = '{0:0.3f}'.format(self.sensors_temp_av[i])
+
+
+        # user sensors
+        for i in range(60):
+            sensor_user_env_var = 'SENSOR_USER_{0:d}'.format(i)
+            cmd_env[sensor_user_env_var] = '{0:0.3f}'.format(self.sensors_user_av[i])
+
+        for i in range(100, 110):
+            sensor_user_env_var = 'SENSOR_USER_{0:d}'.format(i)
+            cmd_env[sensor_user_env_var] = '{0:0.3f}'.format(self.sensors_user_av[i])
+
+
+        cmd = [
+            str(pre_capture_hook_p),
+        ]
+
+
+        try:
+            pre_capture_hook_process = subprocess.Popen(
+                cmd,
+                env=cmd_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+        except OSError:
+            logger.error('Pre-capture script failed to execute')
+            return
+
+
+        capture_hook_timeout = self.config.get('CAPTURE_HOOK_TIMEOUT', 5)
+
+        try:
+            pre_capture_hook_process.wait(timeout=capture_hook_timeout)
+        except subprocess.TimeoutExpired:
+            logger.error('Pre-capture script timed out')
+
+            for _ in range(5):
+                if not self._processRunning(pre_capture_hook_process):
+                    break
+
+                pre_capture_hook_process.terminate()
+                time.sleep(0.25)
+                continue
+
+
+            if self._processRunning(pre_capture_hook_process):
+                logger.error('Killing image pre-save script')
+                pre_capture_hook_process.kill()
+                pre_capture_hook_process.poll()  # close out process
+
+            return
+
+
+        stdout, stderr = pre_capture_hook_process.communicate()
+
+
+        hook_rc = pre_capture_hook_process.returncode
+        if hook_rc != 0:
+            logger.error('Pre-capture hook failed rc: %d', hook_rc)
+
+            for line in stdout.decode().split('\n'):
+                logger.error('Hook: %s', line)
+
+
+    def _processRunning(self, process):
+        if not process:
+            return False
+
+        # poll returns None when process is active, rc (normally 0) when finished
+        poll = process.poll()
+        if isinstance(poll, type(None)):
+            return True
+
+        return False
+
+
+    def getGpsPosition(self):
+        if not self.config.get('GPS_ENABLE'):
+            return
+
+        if self.indiclient.gps_device is None:
+            return
+
+        update_position = False
+
+        gps_lat, gps_long, gps_elev = self.indiclient.getGpsPosition()
+
+        if gps_long > 180.0:
+            # put longitude in range of -180 to 180
+            gps_long = gps_long - 360.0
+
+
+        # need 1/10 degree difference before updating location
+        if abs(gps_lat - self.position_av[constants.POSITION_LATITUDE]) > 0.1:
+            self.updateConfigLocation(gps_lat, gps_long, gps_elev)
+            update_position = True
+        elif abs(gps_long - self.position_av[constants.POSITION_LONGITUDE]) > 0.1:
+            self.updateConfigLocation(gps_lat, gps_long, gps_elev)
+            update_position = True
+        elif abs(gps_elev - self.position_av[constants.POSITION_ELEVATION]) > 30:
+            self.updateConfigLocation(gps_lat, gps_long, gps_elev)
+            update_position = True
+
+
+        if update_position:
+            # Update shared values
+            with self.position_av.get_lock():
+                self.position_av[constants.POSITION_LATITUDE] = float(gps_lat)
+                self.position_av[constants.POSITION_LONGITUDE] = float(gps_long)
+                self.position_av[constants.POSITION_ELEVATION] = float(gps_elev)
+
+
+            self.reparkTelescope()
+
+
+            # update transition time
+            self.next_forced_transition_time = self._dateCalcs.getNextDayNightTransition().timestamp()
+            logger.warning(
+                'Next forced transition time: %s (%0.1fh)',
+                datetime.fromtimestamp(self.next_forced_transition_time).strftime('%Y-%m-%d %H:%M:%S'),
+                (self.next_forced_transition_time - time.time()) / 3600,
+            )
+
+
+        return gps_lat, gps_long, gps_elev
+
+
+    def getTelescopeRaDec(self):
+        if self.indiclient.telescope_device is None:
+            return
+
+        ra, dec = self.indiclient.getTelescopeRaDec()
+
+        # Update shared values
+        with self.position_av.get_lock():
+            self.position_av[constants.POSITION_RA] = float(ra)
+            self.position_av[constants.POSITION_DEC] = float(dec)
+
+
+        return ra, dec
+
+
+    def updateConfigLocation(self, gps_lat, gps_long, gps_elev):
+        logger.warning('Queuing config update with new geographic location')
+
+        self.config['LOCATION_LATITUDE'] = round(float(gps_lat), 3)
+        self.config['LOCATION_LONGITUDE'] = round(float(gps_long), 3)
+        self.config['LOCATION_ELEVATION'] = int(gps_elev)
+
+
+        task_setlocation = IndiAllSkyDbTaskQueueTable(
+            queue=TaskQueueQueue.MAIN,
+            state=TaskQueueState.MANUAL,
+            priority=100,
+            data={
+                'action'      : 'setlocation',
+                'camera_id'   : self.camera_id,
+                'latitude'    : float(gps_lat),
+                'longitude'   : float(gps_long),
+                'elevation'   : int(gps_elev),
+            },
+        )
+
+        db.session.add(task_setlocation)
+        db.session.commit()
+
+
+    def reparkTelescope(self):
+        if self.indiclient.telescope_device is None:
+            return
+
+        self.indiclient.unparkTelescope()
+        self.indiclient.setTelescopeParkPosition(0.0, self.position_av[constants.POSITION_LATITUDE])
+        self.indiclient.parkTelescope()
+
+
+    def reconfigureCcd(self):
+        if not self.reconfigure_camera:
+            return
+
+        self.reconfigure_camera = False
+
+
+        if self.night:
+            # always indicate timelapse generation at night
+            self.generate_timelapse_flag = True
+
+
+            self.indi_config = self.config['INDI_CONFIG_DEFAULTS']
+
+            # cooling
+            if self.config.get('CCD_COOLING'):
+                ccd_temp = self.config.get('CCD_TEMP', 15.0)
+                self.indiclient.enableCcdCooler()
+                self.indiclient.setCcdTemperature(ccd_temp)
+            else:
+                self.indiclient.disableCcdCooler()
+
+
+            if self.moonmode:
+                logger.warning('Change to night (moon mode)')
+            else:
+                logger.warning('Change to night (normal mode)')
+
+
+            if self.config['CAMERA_INTERFACE'].startswith('libcamera_') or self.config['CAMERA_INTERFACE'].startswith('mqtt_'):
+                libcamera_image_type = self.config.get('LIBCAMERA', {}).get('IMAGE_FILE_TYPE', 'jpg')
+                if libcamera_image_type == 'dng':
+                    self.indiclient.libcamera_bit_depth = 16
+                else:
+                    self.indiclient.libcamera_bit_depth = 8
+
+        else:
+            logger.warning('Change to day')
+
+
+            if not self.config.get('DAYTIME_CAPTURE') or not self.config.get('DAYTIME_CAPTURE_SAVE', True):
+                self.generate_timelapse_flag = False
+            else:
+                self.generate_timelapse_flag = True
+
+
+
+            if self.config.get('INDI_CONFIG_DAY', {}):
+                self.indi_config = self.config['INDI_CONFIG_DAY']
+            else:
+                self.indi_config = self.config['INDI_CONFIG_DEFAULTS']
+
+
+            # cooling
+            if self.config.get('CCD_COOLING_DAY'):
+                ccd_temp = self.config.get('CCD_TEMP_DAY', 35.0)
+                self.indiclient.enableCcdCooler()
+                self.indiclient.setCcdTemperature(ccd_temp)
+            else:
+                self.indiclient.disableCcdCooler()
+
+
+            if self.config['CAMERA_INTERFACE'].startswith('libcamera_') or self.config['CAMERA_INTERFACE'].startswith('mqtt_'):
+                libcamera_image_type = self.config.get('LIBCAMERA', {}).get('IMAGE_FILE_TYPE_DAY', 'jpg')
+                if libcamera_image_type == 'dng':
+                    self.indiclient.libcamera_bit_depth = 16
+                else:
+                    self.indiclient.libcamera_bit_depth = 8
+
+
+        # update CCD config
+        self.indiclient.configureCcdDevice(self.indi_config)
+
+
+        ### Update shared values
+        # These need to be updated in the capture process to indicate the real state of the camera
+        with self.night_av.get_lock():
+            self.night_av[constants.NIGHT_NIGHT] = int(self.night)
+            self.night_av[constants.NIGHT_MOONMODE] = int(self.moonmode)
+
+
+    def detectNight(self):
+        obs = ephem.Observer()
+        obs.lon = math.radians(self.position_av[constants.POSITION_LONGITUDE])
+        obs.lat = math.radians(self.position_av[constants.POSITION_LATITUDE])
+        obs.elevation = self.position_av[constants.POSITION_ELEVATION]
+
+        # disable atmospheric refraction calcs
+        obs.pressure = 0
+
+        obs.date = datetime.now(tz=timezone.utc)  # ephem expects UTC dates
+
+        sun = ephem.Sun()
+        moon = ephem.Moon()
+
+        sun.compute(obs)
+        moon.compute(obs)
+
+
+        with self.astro_av.get_lock():
+            self.astro_av[constants.ASTRO_SUN_ALT] = float(math.degrees(sun.alt))
+            self.astro_av[constants.ASTRO_MOON_ALT] = float(math.degrees(moon.alt))
+            self.astro_av[constants.ASTRO_MOON_PHASE] = float(moon.moon_phase * 100.0)
+
+
+        # Night
+        self.night = sun.alt < self.night_sun_radians  # boolean
+
+
+        logger.info(
+            'Sun alt: %0.1f, Moon alt: %0.1f, phase %0.1f%%',
+            self.astro_av[constants.ASTRO_SUN_ALT],
+            self.astro_av[constants.ASTRO_MOON_ALT],
+            self.astro_av[constants.ASTRO_MOON_PHASE],
+        )
+
+        if self.night:
+            if moon.alt >= self.night_moonmode_radians:
+                if self.astro_av[constants.ASTRO_MOON_PHASE] >= self.config['NIGHT_MOONMODE_PHASE']:
+                    #logger.info('Moon Mode conditions detected')
+                    self.moonmode = True
+                    return
+
+        self.moonmode = False
+
+
+    def _generateDayTimelapse(self, timespec, camera_id, task_state=TaskQueueState.QUEUED):
+        if not self.config.get('TIMELAPSE_ENABLE', True):
+            logger.warning('Timelapse creation disabled')
+            return
+
+        if not self.config.get('DAYTIME_TIMELAPSE', True):
+            logger.warning('Daytime Timelapse creation disabled')
+            return
+
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        logger.warning('Generating day time timelapse for %s camera %d', timespec, camera.id)
+
+        video_jobdata = {
+            'action' : 'generateVideo',
+            'kwargs' : {
+                'timespec'    : timespec,
+                'night'       : False,
+                'camera_id'   : camera.id,
+            }
+        }
+
+        video_task = IndiAllSkyDbTaskQueueTable(
+            queue=TaskQueueQueue.VIDEO,
+            state=task_state,
+            data=video_jobdata,
+        )
+        db.session.add(video_task)
+        db.session.commit()
+
+        self.video_q.put({'task_id' : video_task.id})
+
+
+        if self.config.get('FISH2PANO', {}).get('ENABLE'):
+            panorama_video_jobdata = {
+                'action'      : 'generatePanoramaVideo',
+                'kwargs' : {
+                    'timespec'    : timespec,
+                    'night'       : False,
+                    'camera_id'   : camera.id,
+                },
+            }
+
+            panorama_video_task = IndiAllSkyDbTaskQueueTable(
+                queue=TaskQueueQueue.VIDEO,
+                state=task_state,
+                data=panorama_video_jobdata,
+            )
+            db.session.add(panorama_video_task)
+            db.session.commit()
+
+            self.video_q.put({'task_id' : panorama_video_task.id})
+
+
+    def _generateNightTimelapse(self, timespec, camera_id, task_state=TaskQueueState.QUEUED):
+        if not self.config.get('TIMELAPSE_ENABLE', True):
+            logger.warning('Timelapse creation disabled')
+            return
+
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        logger.warning('Generating night time timelapse for %s camera %d', timespec, camera.id)
+
+        video_jobdata = {
+            'action'      : 'generateVideo',
+            'kwargs' : {
+                'timespec'    : timespec,
+                'night'       : True,
+                'camera_id'   : camera.id,
+            },
+        }
+
+        video_task = IndiAllSkyDbTaskQueueTable(
+            queue=TaskQueueQueue.VIDEO,
+            state=task_state,
+            data=video_jobdata,
+        )
+        db.session.add(video_task)
+        db.session.commit()
+
+        self.video_q.put({'task_id' : video_task.id})
+
+
+        if self.config.get('FISH2PANO', {}).get('ENABLE'):
+            panorama_video_jobdata = {
+                'action'      : 'generatePanoramaVideo',
+                'kwargs' : {
+                    'timespec'    : timespec,
+                    'night'       : True,
+                    'camera_id'   : camera.id,
+                },
+            }
+
+            panorama_video_task = IndiAllSkyDbTaskQueueTable(
+                queue=TaskQueueQueue.VIDEO,
+                state=task_state,
+                data=panorama_video_jobdata,
+            )
+            db.session.add(panorama_video_task)
+            db.session.commit()
+
+            self.video_q.put({'task_id' : panorama_video_task.id})
+
+
+    def _generateNightKeogram(self, timespec, camera_id, task_state=TaskQueueState.QUEUED):
+        if not self.config.get('TIMELAPSE_ENABLE', True):
+            logger.warning('Timelapse creation disabled')
+            return
+
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        logger.warning('Generating night time keogram for %s camera %d', timespec, camera.id)
+
+        jobdata = {
+            'action' : 'generateKeogramStarTrails',
+            'kwargs' : {
+                'timespec'    : timespec,
+                'night'       : True,
+                'camera_id'   : camera.id,
+            },
+        }
+
+        task = IndiAllSkyDbTaskQueueTable(
+            queue=TaskQueueQueue.VIDEO,
+            state=task_state,
+            data=jobdata,
+        )
+        db.session.add(task)
+        db.session.commit()
+
+        self.video_q.put({'task_id' : task.id})
+
+
+    def _generateDayKeogram(self, timespec, camera_id, task_state=TaskQueueState.QUEUED):
+        if not self.config.get('TIMELAPSE_ENABLE', True):
+            logger.warning('Timelapse creation disabled')
+            return
+
+        if not self.config.get('DAYTIME_TIMELAPSE', True):
+            logger.warning('Daytime Timelapse creation disabled')
+            return
+
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        logger.warning('Generating day time keogram for %s camera %d', timespec, camera.id)
+
+        jobdata = {
+            'action'      : 'generateKeogramStarTrails',
+            'kwargs' : {
+                'timespec'    : timespec,
+                'night'       : False,
+                'camera_id'   : camera.id,
+            },
+        }
+
+        task = IndiAllSkyDbTaskQueueTable(
+            queue=TaskQueueQueue.VIDEO,
+            state=task_state,
+            data=jobdata,
+        )
+        db.session.add(task)
+        db.session.commit()
+
+        self.video_q.put({'task_id' : task.id})
+
+
+    def shoot(self, exposure, gain, binning, sync=True, timeout=None, sqm_exposure=False):
+        # sqm used for an image taking at a specific exposure/gain for a controlled SQM measurement
+        logger.info('Taking %0.6fs exposure (gain %0.3f / bin %d)', exposure, gain, binning)
+
+        if not sync:
+            self.health.exposure_started.value = int(time.time())
+            if self.config.get('CAMERA_INTERFACE') == 'indi_passive':
+                phase = 'Waiting for external exposure'
+            else:
+                phase = 'Capturing an SQM exposure' if sqm_exposure else 'Capturing an image'
+            self.activity.set(self.camera_id, phase)
+            self.health.capture_stage('exposing')
+            # Passive INDI observes another controller's acquisitions.
+            if self.config.get('CAMERA_INTERFACE') != 'indi_passive':
+                self.deadline.start(time.monotonic(), exposure, self.health.frames.value)
+        self.indiclient.setCcdExposure(exposure, gain, binning, sync=sync, timeout=timeout, sqm_exposure=sqm_exposure)
+
+
+    def setTimeSystemd(self, new_datetime_utc):
+        logger.warning('Setting system time to %s (UTC)', new_datetime_utc)
+
+        epoch = new_datetime_utc.timestamp() + 5  # add 5 due to sleep below
+        epoch_msec = epoch * 1000000
+
+        system_bus = dbus.SystemBus()
+        timedate1 = system_bus.get_object('org.freedesktop.timedate1', '/org/freedesktop/timedate1')
+        manager = dbus.Interface(timedate1, 'org.freedesktop.timedate1')
+
+        logger.warning('Disabling NTP time sync')
+        manager.SetNTP(False, False)  # disable time sync
+        time.sleep(5.0)  # give enough time for time sync to diable
+
+        r2 = manager.SetTime(epoch_msec, False, False)
+
+        return r2
+
+
+    def _uploadAllskyEndOfNight(self, camera_id, task_state=TaskQueueState.QUEUED):
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        # This will delete old images from the filesystem and DB
+        jobdata = {
+            'action' : 'uploadAllskyEndOfNight',
+            'kwargs' : {
+                'night'        : True,
+                'camera_id'    : camera.id,
+            },
+        }
+
+        task = IndiAllSkyDbTaskQueueTable(
+            queue=TaskQueueQueue.VIDEO,
+            state=task_state,
+            data=jobdata,
+        )
+        db.session.add(task)
+        db.session.commit()
+
+        self.video_q.put({'task_id' : task.id})
+
+
+    def _expireData(self, camera_id, task_state=TaskQueueState.QUEUED):
+
+        camera = IndiAllSkyDbCameraTable.query\
+            .filter(IndiAllSkyDbCameraTable.id == camera_id)\
+            .one()
+
+
+        # This will delete old images from the filesystem and DB
+        jobdata = {
+            'action' : 'expireData',
+            'kwargs' : {
+                'camera_id' : camera.id,
+            }
+        }
+
+        task = IndiAllSkyDbTaskQueueTable(
+            queue=TaskQueueQueue.VIDEO,
+            state=task_state,
+            data=jobdata,
+        )
+        db.session.add(task)
+        db.session.commit()
+
+        self.video_q.put({'task_id' : task.id})
+
+
+    def update_sensor_slot_labels(self):
+        import psutil
+        from .devices import sensors as indi_allsky_sensors
+
+        from .sensor_slots import SENSOR_DEFAULTS, sensor_reading_count
+
+        settings = self.config.get('TEMP_SENSOR', {})
+        for letter, defaults in SENSOR_DEFAULTS.items():
+            classname = settings.get(letter + '_CLASSNAME', '')
+            if not classname:
+                continue
+            try:
+                sensor_class = getattr(indi_allsky_sensors, classname)
+                count = sensor_reading_count(sensor_class)
+                sensor_index = constants.SENSOR_INDEX_MAP[str(settings.get(letter + '_USER_VAR_SLOT', defaults['USER_VAR_SLOT']))]
+                labels = sensor_class.get_labels(settings.get(letter + '_PIN_1', ''))
+                if not isinstance(labels, (tuple, list)) or len(labels) < count:
+                    raise ValueError('Driver labels must cover each reading')
+                for x in range(count):
+                    try:
+                        label_data = {
+                            'name': sensor_class.METADATA['name'],
+                            'label': settings.get(letter + '_LABEL', defaults['LABEL']),
+                            'probe': labels[x],
+                        }
+                        self.SENSOR_SLOTS[sensor_index + x][1] = settings.get(letter + '_TITLE_TEMPLATE', defaults['TITLE_TEMPLATE']).format(**label_data)
+                    except IndexError:
+                        logger.error('Not enough slots for sensor values')
+            except (AttributeError, KeyError, TypeError, ValueError) as e:
+                logger.error('Error building labels for sensor %s (%s): %s', letter, classname, str(e))
+
+
+        # Set system temp names
+        temp_info = psutil.sensors_temperatures()
+
+        temp_label_list = list()
+        for t_key in sorted(temp_info):  # always return the keys in the same order
+            for i, t in enumerate(temp_info[t_key]):
+                # these names will match the mqtt topics
+                if not t.label:
+                    # use index for label name
+                    label = str(i)
+                else:
+                    label = t.label
+
+                topic = '{0:s}/{1:s}'.format(t_key, label)
+                temp_label_list.append(topic)
+
+
+        for x, label in enumerate(temp_label_list[:50]):  # limit to 50
+            self.SENSOR_SLOTS[x + 80][1] = '{0:s}'.format(label)

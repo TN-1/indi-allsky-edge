@@ -784,7 +784,7 @@ class VideoWorker(Process):
             video_metadata['data']['note'] = preserved_note
         if preserved_tags:
             video_metadata['data']['tags'] = preserved_tags
-        chart_summary = build_video_chart_summary(chart_samples)
+        chart_summary = build_video_chart_summary(chart_samples) if night else None
         if chart_summary:
             video_metadata['data']['chart_summary'] = chart_summary
 

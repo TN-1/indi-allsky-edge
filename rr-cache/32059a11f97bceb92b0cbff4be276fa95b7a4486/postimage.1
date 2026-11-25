@@ -1,0 +1,1527 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ website_title }}: {{ page_title }}{% endblock %}
+
+{% block head %}
+<meta charset="UTF-8">
+<script type="module" src="{{ url_for('indi_allsky.static', filename='js/cally.js') }}"></script>
+
+<script src="{{ url_for('indi_allsky.static', filename='photoswipe/dist/umd/photoswipe.umd.min.js') }}"></script>
+<script src="{{ url_for('indi_allsky.static', filename='photoswipe/dist/umd/photoswipe-lightbox.umd.min.js') }}"></script>
+<link rel="stylesheet" href="{{ url_for('indi_allsky.static', filename='photoswipe/dist/photoswipe.css') }}">
+<style>
+.pswp .pswp__top-bar {
+    /* Let action buttons wrap below the fixed left-hand status controls. */
+    display: flow-root;
+    height: auto;
+    min-height: 60px;
+}
+.pswp__top-bar > * {
+    float: right;
+}
+.gallery-toolbar-status {
+    display: flex;
+    float: left;
+}
+/* Centre the 16-unit custom artwork like PhotoSwipe's padded 32-unit icons. */
+.pswp__top-bar .pswp__icn[viewBox="0 0 16 16"] {
+    width: 16px;
+    height: 16px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+.pswp .pswp__counter {
+    font: 600 12px/30px sans-serif;
+}
+.pswp .pswp__button--panorama-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: auto;
+    padding: 0 8px;
+    color: var(--pswp-icon-color);
+    font: 600 12px/1.2 sans-serif;
+}
+.pswp__button--panorama-button:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: -4px;
+}
+.gallery-panorama-switch {
+    width: 28px;
+    height: 14px;
+    border-radius: 7px;
+    background: #64748b;
+}
+.gallery-panorama-switch::before {
+    content: '';
+    display: block;
+    width: 10px;
+    height: 10px;
+    margin: 2px;
+    border-radius: 50%;
+    background: #fff;
+}
+[aria-checked="true"] .gallery-panorama-switch {
+    background: #0284c7;
+}
+[aria-checked="true"] .gallery-panorama-switch::before {
+    transform: translateX(14px);
+}
+
+#allsky-gallery {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)) !important;
+    gap: 1rem !important;
+}
+#allsky-gallery a {
+    position: relative !important;
+    display: block !important;
+    width: 100% !important;
+    height: 180px !important;
+    overflow: hidden !important;
+    border-radius: 0.75rem !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    transition: transform 0.2s ease, border-color 0.2s ease !important;
+    background-color: var(--color-base-200, #1d232a) !important;
+}
+#allsky-gallery a:hover {
+    transform: scale(1.04) !important;
+    border-color: var(--color-primary, #3b82f6) !important;
+}
+#allsky-gallery img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    display: block !important;
+}
+
+/* Purple-frame audit styling uses stored server status only; the gallery
+ * never reclassifies or mutates a frame. */
+#allsky-gallery a.asi676mc-repaired-thumbnail,
+#allsky-gallery a.asi676mc-excluded-thumbnail {
+    box-shadow: inset 0 0 0 4px var(--color-warning, #f59e0b) !important;
+}
+
+#allsky-gallery a.asi676mc-validation-failed-thumbnail {
+    box-shadow: inset 0 0 0 4px var(--color-error, #ef4444) !important;
+}
+
+.asi676mc-repair-badge {
+    position: absolute;
+    top: 0.4rem;
+    right: 0.4rem;
+    z-index: 1;
+    max-width: calc(100% - 0.8rem);
+    padding: 0.2rem 0.45rem;
+    border-radius: 9999px;
+    color: var(--color-warning-content, #111827);
+    background: var(--color-warning, #f59e0b);
+    font-size: 0.625rem;
+    font-weight: 700;
+    line-height: 1.2;
+    text-align: center;
+    pointer-events: none;
+}
+
+.asi676mc-repair-badge.validation-failed {
+    color: var(--color-error-content, #ffffff);
+    background: var(--color-error, #ef4444);
+}
+</style>
+
+<script type="text/javascript">
+var camera_id = {{ camera_id }};
+var asi676mc_repair_gallery_enabled = Boolean({{ asi676mc_repair_gallery_enabled }});
+var lightbox = null;
+var newest_entry_default = true;
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="tw:container tw:mx-auto tw:flex tw:flex-col tw:gap-4">
+
+    <form id="form_viewer" onsubmit="return false;" class="tw:w-full tw:bg-base-200 tw:p-4 tw:rounded-[var(--radius-box)] sticky-desktop-header tw:shadow-md">
+        {{ form_viewer.csrf_token }}
+        <div class="tw:text-error tw:text-xs tw:font-semibold tw:mb-2" id="csrf_token-error" style="display: none;"></div>
+
+        <div class="tw:flex tw:flex-wrap tw:items-center tw:justify-center tw:gap-6">
+            
+            <div class="tw:hidden">
+                {{ form_viewer.YEAR_SELECT.label(class='tw:label-text tw:font-semibold tw:whitespace-nowrap') }}
+                {{ form_viewer.YEAR_SELECT(class='tw:select') }}
+                <div id="YEAR_SELECT-error"></div>
+                
+                {{ form_viewer.CAMERA_ID(class='tw:input') }}
+                <div id="CAMERA_ID-error"></div>
+
+                {{ form_viewer.MONTH_SELECT.label(class='tw:label-text tw:font-semibold tw:whitespace-nowrap') }}
+                {{ form_viewer.MONTH_SELECT(class='tw:select') }}
+                <div id="MONTH_SELECT-error"></div>
+
+                {{ form_viewer.DAY_SELECT.label(class='tw:label-text tw:font-semibold tw:whitespace-nowrap') }}
+                {{ form_viewer.DAY_SELECT(class='tw:select') }}
+                <div id="DAY_SELECT-error"></div>
+            </div>
+
+            {% include 'calendar_picker.html' %}
+
+            <div class="tw:flex tw:items-center tw:gap-2">
+                {{ form_viewer.HOUR_SELECT.label(class='tw:label-text tw:font-semibold tw:whitespace-nowrap') }}
+                <div class="tw:flex tw:flex-col">
+                    {{ form_viewer.HOUR_SELECT(class='tw:select tw:select-bordered tw:select-sm tw:bg-base-100 tw:text-base-content') }}
+                    <div id="HOUR_SELECT-error" class="tw:text-error tw:text-xs tw:mt-1" style="display: none;"></div>
+                </div>
+            </div>
+
+            <div class="tw:flex tw:items-center tw:gap-3">
+                {{ form_viewer.FILTER_DETECTIONS.label(class='tw:label-text tw:font-semibold') }}
+                <div class="tw:flex tw:items-center">
+                    {{ form_viewer.FILTER_DETECTIONS(class='tw:toggle tw:toggle-primary tw:toggle-sm') }}
+                    <div id="FILTER_DETECTIONS-error" class="tw:text-error tw:text-xs tw:ml-2" style="display: none;"></div>
+                </div>
+            </div>
+
+            <div class="tw:flex tw:items-center tw:gap-2">
+                {{ form_viewer.FILTER_AURORA.label(class='tw:label-text tw:font-semibold') }}
+                {{ form_viewer.FILTER_AURORA(class='tw:toggle tw:toggle-primary tw:toggle-sm') }}
+                {{ form_viewer.FILTER_AURORA_MIN(class='tw:input tw:input-bordered tw:input-xs tw:w-16 tw:bg-base-100 tw:text-base-content tw:text-center', min=1, max=100, title='Minimum Aurora (OVATION) probability %') }}
+                <span class="tw:text-xs tw:text-base-content/70">%</span>
+                <div id="FILTER_AURORA-error" class="tw:text-error tw:text-xs" style="display: none;"></div>
+            </div>
+
+            <!-- These selectors cover only ASI676MC audit statuses. The
+                 excluded selector intentionally ignores manual exclusions. -->
+            <div id="asi676mc-gallery-filters" class="tw:flex tw:flex-wrap tw:items-center tw:justify-center tw:gap-4{% if not asi676mc_repair_gallery_enabled %} tw:hidden{% endif %}">
+                <div class="tw:flex tw:items-center tw:gap-2">
+                    {{ form_viewer.FILTER_ASI676MC_REPAIRED.label(class='tw:label-text tw:text-xs tw:font-semibold') }}
+                    {{ form_viewer.FILTER_ASI676MC_REPAIRED(class='tw:toggle tw:toggle-warning tw:toggle-sm') }}
+                    <div id="FILTER_ASI676MC_REPAIRED-error" class="tw:text-error tw:text-xs" style="display: none;"></div>
+                </div>
+                <div class="tw:flex tw:items-center tw:gap-2" title="Only frames excluded automatically by ASI676MC purple-frame handling">
+                    {{ form_viewer.FILTER_ASI676MC_EXCLUDED.label(class='tw:label-text tw:text-xs tw:font-semibold') }}
+                    {{ form_viewer.FILTER_ASI676MC_EXCLUDED(class='tw:toggle tw:toggle-warning tw:toggle-sm') }}
+                    <div id="FILTER_ASI676MC_EXCLUDED-error" class="tw:text-error tw:text-xs" style="display: none;"></div>
+                </div>
+                <div class="tw:flex tw:items-center tw:gap-2">
+                    {{ form_viewer.FILTER_ASI676MC_FAILED.label(class='tw:label-text tw:text-xs tw:font-semibold') }}
+                    {{ form_viewer.FILTER_ASI676MC_FAILED(class='tw:toggle tw:toggle-error tw:toggle-sm') }}
+                    <div id="FILTER_ASI676MC_FAILED-error" class="tw:text-error tw:text-xs" style="display: none;"></div>
+                </div>
+            </div>
+
+            <div class="tw:flex tw:items-center">
+                <span id="loader_filter" class="tw:loading tw:loading-spinner tw:loading-xs tw:text-primary" style="display: none;"></span>
+            </div>
+        </div>
+
+        <div id="success-message" class="tw:text-success tw:text-sm tw:font-medium tw:text-center tw:mt-1" style="display: none;"></div>
+        <div id="failure-message" class="tw:text-error tw:text-sm tw:font-medium tw:text-center tw:mt-1" style="display: none;"></div>
+
+    </form>
+
+    <div class="tw:flex tw:justify-center">
+        <div class="tw:text-base-content/60 tw:text-center tw:text-xs tw:tracking-wide tw:bg-base-content/5 tw:px-4 tw:py-1.5 tw:rounded-full tw:font-medium">
+            Use arrow keys, <span class="tw:font-bold tw:text-base-content/80">WASD</span>, or <span class="tw:font-bold tw:text-base-content/80">VIM keys</span> to cycle images — Hour: <span class="tw:text-primary tw:font-bold">Up/Down</span>
+        </div>
+    </div>
+
+    <div class="tw:w-full tw:grow">
+        <div id="allsky-gallery" class="pswp-gallery tw:w-full tw:grid tw:grid-cols-2 sm:tw:grid-cols-3 md:tw:grid-cols-4 lg:tw:grid-cols-6 xl:tw:grid-cols-8 tw:gap-3"></div>
+    </div>
+
+    <div class="tw:py-4"></div>
+
+</div>
+
+<script>
+const successMessage = $('#success-message');
+const failureMessage = $('#failure-message');
+const field_names = [
+    'csrf_token',
+    'CAMERA_ID',
+    'YEAR_SELECT',
+    'MONTH_SELECT',
+    'DAY_SELECT',
+    'HOUR_SELECT',
+    'FILTER_AURORA_MIN',
+];
+
+const checkbox_field_names = [
+    'FILTER_DETECTIONS',
+    'FILTER_AURORA',
+    'FILTER_ASI676MC_REPAIRED',
+    'FILTER_ASI676MC_EXCLUDED',
+    'FILTER_ASI676MC_FAILED',
+];
+
+var fields = {};
+field_names.forEach(item => {
+    fields[item] = {
+        'input' : $('#' + item),
+        'error' : $('#' + item + '-error'),
+    };
+});
+
+checkbox_field_names.forEach(item => {
+    fields[item] = {
+        'input' : $('#' + item),
+        'error' : $('#' + item + '-error'),
+    };
+});
+
+fields['form_global'] = {
+    'input' : failureMessage,
+    'error' : failureMessage,
+};
+
+// Keep every calendar and filter request consistent without duplicating the
+// model-specific flags at each navigation level.
+function with_asi676mc_gallery_filters(json_data) {
+    json_data.FILTER_ASI676MC_REPAIRED = Boolean(
+        asi676mc_repair_gallery_enabled
+        && fields.FILTER_ASI676MC_REPAIRED.input.prop('checked')
+    );
+    json_data.FILTER_ASI676MC_EXCLUDED = Boolean(
+        asi676mc_repair_gallery_enabled
+        && fields.FILTER_ASI676MC_EXCLUDED.input.prop('checked')
+    );
+    json_data.FILTER_ASI676MC_FAILED = Boolean(
+        asi676mc_repair_gallery_enabled
+        && fields.FILTER_ASI676MC_FAILED.input.prop('checked')
+    );
+    return json_data;
+}
+
+
+function exclude_image(el, pswp, image_id, exclude) {
+    var json_data = {
+        'CAMERA_ID'        : fields["CAMERA_ID"].input.val(),
+        'EXCLUDE_IMAGE_ID' : image_id,
+        'EXCLUDE_EXCLUDE'  : exclude,
+    };
+
+    console.log('Setting image exclude: ' + json_data.EXCLUDE_IMAGE_ID)
+
+    $.ajax({
+        type: "POST",
+        url: "{{ url_for('indi_allsky.ajax_image_exclude_view') }}",
+        contentType: "application/json",
+        data: JSON.stringify(json_data),
+        success: function(rdata){
+            if (rdata['exclude']) {
+                pswp.currSlide.data.element.setAttribute("data-exclude", "true")
+                el.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" class="pswp__icn"><path d="M13.359 11.238C15.06 9.72 16 8 16 8s-3-5.5-8-5.5a7 7 0 0 0-2.79.588l.77.771A6 6 0 0 1 8 3.5c2.12 0 3.879 1.168 5.168 2.457A13 13 0 0 1 14.828 8q-.086.13-.195.288c-.335.48-.83 1.12-1.465 1.755q-.247.248-.517.486z"/><path d="M11.297 9.176a3.5 3.5 0 0 0-4.474-4.474l.823.823a2.5 2.5 0 0 1 2.829 2.829zm-2.943 1.299.822.822a3.5 3.5 0 0 1-4.474-4.474l.823.823a2.5 2.5 0 0 0 2.829 2.829"/><path d="M3.35 5.47q-.27.24-.518.487A13 13 0 0 0 1.172 8l.195.288c.335.48.83 1.12 1.465 1.755C4.121 11.332 5.881 12.5 8 12.5c.716 0 1.39-.133 2.02-.36l.77.772A7 7 0 0 1 8 13.5C3 13.5 0 8 0 8s.939-1.721 2.641-3.238l.708.709zm10.296 8.884-12-12 .708-.708 12 12z"/></svg>';
+            } else {
+                pswp.currSlide.data.element.setAttribute("data-exclude", "false")
+                el.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" class="pswp__icn"><path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0"/><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8m8 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7"/></svg>';
+            }
+        },
+        error: function(rdata){
+            const msg = (rdata.responseJSON && rdata.responseJSON.message) || 'Unable to update image exclusion status.';
+            window.alert(msg);
+        },
+    });
+}
+
+
+function scrollToTop() {
+    const mainScroll = document.querySelector('main .tw\\:overflow-y-auto') || document.documentElement || window;
+    if (mainScroll && 'scrollTop' in mainScroll) {
+        mainScroll.scrollTop = 0;
+    }
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+}
+
+
+function populate_gallery(gallery_data) {
+    if (lightbox) {
+        lightbox.destroy();
+        lightbox = null;
+    }
+
+    scrollToTop();
+
+    $('#allsky-gallery').empty();
+
+    if (!gallery_data || gallery_data.length === 0) {
+        $('<div />', {
+            'class': 'tw:col-span-full tw:text-center tw:py-12 tw:text-base-content/50 tw:font-semibold',
+            'text': 'No images found for the selected period.'
+        }).appendTo($('#allsky-gallery'));
+        return;
+    }
+
+    const image_items = [];
+    const panorama_items = [];
+
+    gallery_data.forEach(item => {
+        const repair_status = (
+            asi676mc_repair_gallery_enabled
+            ? item['asi676mc_repair_status']
+            : null
+        );
+        const repair_applied = repair_status === 'repaired';
+        const repair_validation_failed = repair_status === 'validation_failed';
+        const repair_excluded = repair_status === 'excluded';
+        var repair_title = '';
+        if (repair_applied) {
+            repair_title = 'Purple frame repaired';
+        } else if (repair_validation_failed) {
+            repair_title = 'Purple-frame repair failed; original frame retained and excluded from standard timelapses';
+        } else if (repair_excluded) {
+            repair_title = 'Purple frame detected; original frame retained and excluded from standard timelapses';
+        }
+
+        var a_tag = $('<a />', {
+            'href'        : item['url'],
+            'data-pswp-width'  : item['width'],
+            'data-pswp-height' : item['height'],
+            'target'      : "_blank",
+            'rel'         : "noopener noreferrer",
+            'class'       : (
+                'tw:no-underline '
+                + (
+                    repair_applied
+                    ? 'asi676mc-repaired-thumbnail'
+                    : (
+                        repair_excluded
+                        ? 'asi676mc-excluded-thumbnail'
+                        : (
+                            repair_validation_failed
+                            ? 'asi676mc-validation-failed-thumbnail'
+                            : ''
+                        )
+                    )
+                )
+            ),
+            'data-exclude' : item['exclude'],
+            'data-image_id' : item['id'],
+            'data-panorama_id' : item['panorama_id'] || '',
+            'data-ts'     : item['ts'],
+            'data-asi676mc-repair-status' : repair_status || '',
+            'title'       : repair_title,
+        });
+        a_tag.appendTo($('#allsky-gallery'));
+
+        var img_tag = $('<img />', {
+            'src'       : item['thumbnail_url'],
+            'loading'   : 'lazy',
+            'alt'       : item['date'],
+        });
+        img_tag.appendTo(a_tag);
+
+        image_items.push(a_tag[0]);
+        if (item['panorama_url'] && item['panorama_width'] > 0 && item['panorama_height'] > 0) {
+            // Reuse the capture's thumbnail element for toolbar metadata and mode matching.
+            panorama_items.push({
+                element: a_tag[0], src: item['panorama_url'],
+                width: item['panorama_width'], height: item['panorama_height'],
+                alt: item['date'], panorama: true,
+            });
+        }
+
+        if (repair_applied || repair_validation_failed || repair_excluded) {
+            $('<span />', {
+                'class' : (
+                    repair_validation_failed
+                    ? 'asi676mc-repair-badge validation-failed'
+                    : 'asi676mc-repair-badge'
+                ),
+                'text' : (
+                    repair_validation_failed
+                    ? 'Purple-frame repair failed'
+                    : (repair_excluded ? 'Purple frame excluded' : 'Purple frame repaired')
+                ),
+            }).appendTo(a_tag);
+        }
+
+    });
+
+
+    lightbox = new PhotoSwipeLightbox({
+        gallery: '#allsky-gallery',
+        children: 'a',
+        preloadFirstSlide: false,
+        preload: [1, 1],
+        preloaderDelay: 0,
+        loop: false,
+        // Keep the fitted image below the toolbar, including any wrapped rows.
+        paddingFn: () => ({ top: lightbox.pswp?.topBar?.offsetHeight || 60, bottom: 0, left: 0, right: 0 }),
+        // dynamic import is not supported in UMD version
+        pswpModule: PhotoSwipe
+    });
+
+    lightbox.on('uiRegister', function() {
+        lightbox.pswp.ui.registerElement({
+            name: 'mini_timelapse-button',
+            order: 9,
+            title: 'Mini-Timelapse',
+            isButton: true,
+            tagName: 'a',
+
+            // SVG with outline
+            html: {
+              isCustomSVG: true,
+              size: 16,
+              inner: '<path d="M0 1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1zm4 0v6h8V1zm8 8H4v6h8zM1 1v2h2V1zm2 3H1v2h2zM1 7v2h2V7zm2 3H1v2h2zm-2 3v2h2v-2zM15 1h-2v2h2zm-2 3v2h2V4zm2 3h-2v2h2zm-2 3v2h2v-2zm2 3h-2v2h2z"/>',
+            },
+
+            onInit: (el, pswp) => {
+              el.setAttribute('target', '_blank');
+              el.setAttribute('rel', 'noopener');
+
+              pswp.on('change', () => {
+                //console.log('change');
+                el.href = "{{ url_for('indi_allsky.mini_generate_view') }}?image_id=" + pswp.currSlide.data.element.getAttribute("data-image_id");
+                if (pswp.currSlide.data.panorama) {
+                  el.href += '&source=panorama';
+                }
+              });
+            }
+        });
+
+        lightbox.pswp.ui.registerElement({
+            name: 'image-button',
+            order: 9,
+            title: 'Image',
+            isButton: true,
+            tagName: 'a',
+
+            // SVG with outline
+            html: {
+              isCustomSVG: true,
+              size: 16,
+              inner: '<path d="M.002 3a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-12a2 2 0 0 1-2-2V3zm1 9v1a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12zm5-6.5a1.5 1.5 0 1 0-3 0 1.5 1.5 0 0 0 3 0z"/>',
+            },
+
+            onInit: (el, pswp) => {
+              el.setAttribute('target', '_blank');
+              el.setAttribute('rel', 'noopener');
+
+              pswp.on('change', () => {
+                //console.log('change');
+                el.title = pswp.currSlide.data.panorama ? 'Panorama image' : 'Image';
+                el.setAttribute('aria-label', el.title);
+                el.href = pswp.currSlide.data.panorama
+                  ? "{{ url_for('indi_allsky.panorama_image_view') }}?id=" + pswp.currSlide.data.element.getAttribute('data-panorama_id')
+                  : "{{ url_for('indi_allsky.timelapse_image_view')}}?id=" + pswp.currSlide.data.element.getAttribute("data-image_id");
+              });
+            }
+        });
+
+        lightbox.pswp.ui.registerElement({
+            name: 'panorama-button',
+            order: 9,
+            title: 'Show panoramas',
+            ariaLabel: 'Panorama',
+            isButton: true,
+
+            html: '<span>Panorama</span><span class="gallery-panorama-switch" aria-hidden="true"></span>',
+
+            onInit: (el, pswp) => {
+              el.setAttribute('role', 'switch');
+              pswp.on('change', () => {
+                const is_panorama = Boolean(pswp.currSlide.data.panorama);
+                el.style.display = panorama_items.some(item => item.element === pswp.currSlide.data.element) ? '' : 'none';
+                el.title = is_panorama ? 'Show normal images' : 'Show panoramas';
+                el.setAttribute('aria-checked', String(is_panorama));
+              });
+            },
+
+            onClick: (event, el, pswp) => {
+              const items = pswp.currSlide.data.panorama ? image_items : panorama_items;
+              const index = items.findIndex(item => (item.element || item) === pswp.currSlide.data.element);
+              if (index < 0) return;
+
+              // Move before shrinking the list; a target beyond the old list must wait until after the swap.
+              if (index < pswp.getNumItems()) pswp.goTo(index);
+              // Cached slide indexes now refer to different images.
+              pswp.contentLoader.destroy();
+              pswp.options.dataSource = items;
+              const current_index = pswp.currIndex;
+              [current_index, current_index - 1, current_index + 1].forEach(i => pswp.refreshSlideContent(i));
+              pswp.goTo(index);
+            }
+        });
+
+        lightbox.pswp.ui.registerElement({
+            name: 'download-button',
+            order: 9,
+            title: 'Download',
+            isButton: true,
+            tagName: 'a',
+
+            // SVG with outline
+            html: {
+              isCustomSVG: true,
+              inner: '<path d="M20.5 14.3 17.1 18V10h-2.2v7.9l-3.4-3.6L10 16l6 6.1 6-6.1ZM23 23H9v2h14Z" id="pswp__icn-download"/>',
+              outlineID: 'pswp__icn-download'
+            },
+
+            onInit: (el, pswp) => {
+              el.setAttribute('download', '');
+              el.setAttribute('target', '_blank');
+              el.setAttribute('rel', 'noopener');
+
+              pswp.on('change', () => {
+                //console.log('change');
+                el.href = pswp.currSlide.data.src;
+              });
+            }
+        });
+
+        lightbox.pswp.ui.registerElement({
+            name: 'vs-button',
+            order: 8,
+            title: 'VirtualSky',
+            isButton: true,
+            tagName: 'a',
+
+            // SVG with outline
+            html: {
+              isCustomSVG: true,
+              size: 16,
+              inner: '<path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8m7.5-6.923c-.67.204-1.335.82-1.887 1.855q-.215.403-.395.872c.705.157 1.472.257 2.282.287zM4.249 3.539q.214-.577.481-1.078a7 7 0 0 1 .597-.933A7 7 0 0 0 3.051 3.05q.544.277 1.198.49zM3.509 7.5c.036-1.07.188-2.087.436-3.008a9 9 0 0 1-1.565-.667A6.96 6.96 0 0 0 1.018 7.5zm1.4-2.741a12.3 12.3 0 0 0-.4 2.741H7.5V5.091c-.91-.03-1.783-.145-2.591-.332M8.5 5.09V7.5h2.99a12.3 12.3 0 0 0-.399-2.741c-.808.187-1.681.301-2.591.332zM4.51 8.5c.035.987.176 1.914.399 2.741A13.6 13.6 0 0 1 7.5 10.91V8.5zm3.99 0v2.409c.91.03 1.783.145 2.591.332.223-.827.364-1.754.4-2.741zm-3.282 3.696q.18.469.395.872c.552 1.035 1.218 1.65 1.887 1.855V11.91c-.81.03-1.577.13-2.282.287zm.11 2.276a7 7 0 0 1-.598-.933 9 9 0 0 1-.481-1.079 8.4 8.4 0 0 0-1.198.49 7 7 0 0 0 2.276 1.522zm-1.383-2.964A13.4 13.4 0 0 1 3.508 8.5h-2.49a6.96 6.96 0 0 0 1.362 3.675c.47-.258.995-.482 1.565-.667m6.728 2.964a7 7 0 0 0 2.275-1.521 8.4 8.4 0 0 0-1.197-.49 9 9 0 0 1-.481 1.078 7 7 0 0 1-.597.933M8.5 11.909v3.014c.67-.204 1.335-.82 1.887-1.855q.216-.403.395-.872A12.6 12.6 0 0 0 8.5 11.91zm3.555-.401c.57.185 1.095.409 1.565.667A6.96 6.96 0 0 0 14.982 8.5h-2.49a13.4 13.4 0 0 1-.437 3.008M14.982 7.5a6.96 6.96 0 0 0-1.362-3.675c-.47.258-.995.482-1.565.667.248.92.4 1.938.437 3.008zM11.27 2.461q.266.502.482 1.078a8.4 8.4 0 0 0 1.196-.49 7 7 0 0 0-2.275-1.52c.218.283.418.597.597.932m-.488 1.343a8 8 0 0 0-.395-.872C9.835 1.897 9.17 1.282 8.5 1.077V4.09c.81-.03 1.577-.13 2.282-.287z"/>',
+            },
+
+            onInit: (el, pswp) => {
+              el.setAttribute('target', '_blank');
+              el.setAttribute('rel', 'noopener');
+
+              pswp.on('change', () => {
+                //console.log('change');
+                var cam_id = fields["CAMERA_ID"] ? fields["CAMERA_ID"].input.val() : '';
+                var vs_url = "{{ url_for('indi_allsky.virtualsky_view') }}?timestamp=" + pswp.currSlide.data.element.getAttribute("data-ts");
+                if (cam_id) {
+                    vs_url += "&camera_id=" + encodeURIComponent(cam_id);
+                }
+                el.href = vs_url;
+              });
+            }
+        });
+
+        lightbox.pswp.ui.registerElement({
+            name: 'loop-button',
+            order: 8,
+            title: 'Loop',
+            isButton: true,
+            tagName: 'a',
+
+            // SVG with outline
+            html: {
+              isCustomSVG: true,
+              size: 16,
+              inner: '<path d="M11 5.466V4H5a4 4 0 0 0-3.584 5.777.5.5 0 1 1-.896.446A5 5 0 0 1 5 3h6V1.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384l-2.36 1.966a.25.25 0 0 1-.41-.192m3.81.086a.5.5 0 0 1 .67.225A5 5 0 0 1 11 13H5v1.466a.25.25 0 0 1-.41.192l-2.36-1.966a.25.25 0 0 1 0-.384l2.36-1.966a.25.25 0 0 1 .41.192V12h6a4 4 0 0 0 3.585-5.777.5.5 0 0 1 .225-.67Z"/>',
+            },
+
+            onInit: (el, pswp) => {
+              el.setAttribute('target', '_blank');
+              el.setAttribute('rel', 'noopener');
+
+              pswp.on('change', () => {
+                //console.log('change');
+                el.href = (pswp.currSlide.data.panorama
+                  ? "{{ url_for('indi_allsky.panorama_loop_view') }}"
+                  : "{{ url_for('indi_allsky.image_loop_view') }}") + "?timestamp=" + pswp.currSlide.data.element.getAttribute("data-ts");
+              });
+            }
+        });
+
+        lightbox.pswp.ui.registerElement({
+            name: 'chart-button',
+            order: 8,
+            title: 'Chart',
+            isButton: true,
+            tagName: 'a',
+
+            // SVG with outline
+            html: {
+              isCustomSVG: true,
+              size: 16,
+              inner: '<path fill-rule="evenodd" d="M0 0h1v15h15v1H0V0Zm14.817 3.113a.5.5 0 0 1 .07.704l-4.5 5.5a.5.5 0 0 1-.74.037L7.06 6.767l-3.656 5.027a.5.5 0 0 1-.808-.588l4-5.5a.5.5 0 0 1 .758-.06l2.609 2.61 4.15-5.073a.5.5 0 0 1 .704-.07Z"/>',
+            },
+
+            onInit: (el, pswp) => {
+              el.setAttribute('target', '_blank');
+              el.setAttribute('rel', 'noopener');
+
+              pswp.on('change', () => {
+                //console.log('change');
+                el.href = "{{ url_for('indi_allsky.chart_view') }}?timestamp=" + pswp.currSlide.data.element.getAttribute("data-ts");
+              });
+            }
+        });
+
+        lightbox.pswp.ui.registerElement({
+            name: 'lag-button',
+            order: 8,
+            title: 'Lag',
+            isButton: true,
+            tagName: 'a',
+
+            // SVG with outline
+            html: {
+              isCustomSVG: true,
+              size: 16,
+              inner: '<path d="M8.5 5.6a.5.5 0 1 0-1 0v2.9h-3a.5.5 0 0 0 0 1H8a.5.5 0 0 0 .5-.5z"/><path d="M6.5 1A.5.5 0 0 1 7 .5h2a.5.5 0 0 1 0 1v.57c1.36.196 2.594.78 3.584 1.64l.012-.013.354-.354-.354-.353a.5.5 0 0 1 .707-.708l1.414 1.415a.5.5 0 1 1-.707.707l-.353-.354-.354.354-.013.012A7 7 0 1 1 7 2.071V1.5a.5.5 0 0 1-.5-.5M8 3a6 6 0 1 0 .001 12A6 6 0 0 0 8 3"/>',
+            },
+
+            onInit: (el, pswp) => {
+              el.setAttribute('target', '_blank');
+              el.setAttribute('rel', 'noopener');
+
+              pswp.on('change', () => {
+                //console.log('change');
+                el.href = "{{ url_for('indi_allsky.image_lag_view') }}?timestamp=" + pswp.currSlide.data.element.getAttribute("data-ts");
+              });
+            }
+        });
+
+        lightbox.pswp.ui.registerElement({
+            name: 'exclude-button',
+            order: 5,
+            title: 'Include/Exclude',
+            isButton: true,
+            tagName: 'a',
+
+            onInit: (el, pswp) => {
+              pswp.on('change', () => {
+                //console.log('Slide object data', pswp.currSlide.data);
+                if (pswp.currSlide.data.element.getAttribute("data-exclude") == "true") {
+                    el.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" class="pswp__icn"><path d="M13.359 11.238C15.06 9.72 16 8 16 8s-3-5.5-8-5.5a7 7 0 0 0-2.79.588l.77.771A6 6 0 0 1 8 3.5c2.12 0 3.879 1.168 5.168 2.457A13 13 0 0 1 14.828 8q-.086.13-.195.288c-.335.48-.83 1.12-1.465 1.755q-.247.248-.517.486z"/><path d="M11.297 9.176a3.5 3.5 0 0 0-4.474-4.474l.823.823a2.5 2.5 0 0 1 2.829 2.829zm-2.943 1.299.822.822a3.5 3.5 0 0 1-4.474-4.474l.823.823a2.5 2.5 0 0 0 2.829 2.829"/><path d="M3.35 5.47q-.27.24-.518.487A13 13 0 0 0 1.172 8l.195.288c.335.48.83 1.12 1.465 1.755C4.121 11.332 5.881 12.5 8 12.5c.716 0 1.39-.133 2.02-.36l.77.772A7 7 0 0 1 8 13.5C3 13.5 0 8 0 8s.939-1.721 2.641-3.238l.708.709zm10.296 8.884-12-12 .708-.708 12 12z"/></svg>';
+                } else {
+                    el.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" class="pswp__icn"><path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0"/><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8m8 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7"/></svg>';
+                }
+              });
+
+
+              pswp.on('keydown', function(event) {
+                const e = event.originalEvent;
+                var key_press = {
+                  "x" : 88,
+                };
+
+                switch (e.which) {
+                    case key_press.x:
+                        var image_id = pswp.currSlide.data.element.getAttribute("data-image_id");
+
+                        if (pswp.currSlide.data.element.getAttribute("data-exclude") == "true") {
+                            exclude_image(el, pswp, image_id, false);
+                        } else {
+                            exclude_image(el, pswp, image_id, true);
+                        }
+
+                        break;
+
+                    default:
+                        return;
+                }
+
+                e.preventDefault();
+              });
+            },
+
+            onClick: (event, el, pswp) => {
+                var image_id = pswp.currSlide.data.element.getAttribute("data-image_id");
+
+                if (pswp.currSlide.data.element.getAttribute("data-exclude") == "true") {
+                    exclude_image(el, pswp, image_id, false);
+                } else {
+                    exclude_image(el, pswp, image_id, true);
+                }
+            }
+        });
+
+    });
+
+    lightbox.on('afterInit', function() {
+        const pswp = lightbox.pswp;
+        // Keep the counter and exclusion control together at the top left.
+        const status = document.createElement('div');
+        status.className = 'gallery-toolbar-status';
+        status.append(...pswp.topBar.querySelectorAll('.pswp__counter, .pswp__button--exclude-button, .pswp__preloader'));
+        pswp.topBar.prepend(status);
+        // Float Close first, then fill each row leftwards with the remaining actions.
+        Array.from(pswp.topBar.children).slice(1).reverse().forEach(el => pswp.topBar.append(el));
+        // Showing or hiding the switch can wrap the toolbar without a window resize.
+        const toolbar_observer = new ResizeObserver(() => pswp.updateSize(true));
+        toolbar_observer.observe(pswp.topBar);
+        pswp.on('destroy', () => toolbar_observer.disconnect());
+    });
+
+    //lightbox.addFilter('uiElement', (el, data) => {
+    //  if (data.name === 'exclude-button') {
+    //  }
+    //  return el;
+    //});
+
+    lightbox.init();
+}
+
+
+function hour_change(json_data) {
+    json_data = with_asi676mc_gallery_filters(json_data);
+    $.ajax({
+        type: "POST",
+        url: "{{ url_for('indi_allsky.ajax_gallery_view') }}",
+        contentType: "application/json",
+        data: JSON.stringify(json_data),
+        success: function(rdata){
+            gallery_data = [];
+            rdata['IMAGE_DATA'].forEach(item => {
+                gallery_data.push({
+                    'src' : item['url'],
+                    'width' : item['width'],
+                    'height' : item['height'],
+                    'alt' : item['date'],
+                });
+            });
+
+            populate_gallery(rdata['IMAGE_DATA']);
+
+            $("#loader_filter").hide();
+        },
+        error: function(rdata){
+            var errors = JSON.parse(rdata.responseText);
+            Object.keys(errors).forEach((key) => {
+                fields[key].input.addClass('tw:border-error');
+                fields[key].error.html(errors[key][0]).show();
+            });
+        },
+    });
+}
+
+
+$("#HOUR_SELECT").on("change", function() {
+    // hide all errors
+    successMessage.hide();
+    Object.keys(fields).forEach((key) => {
+        fields[key].error.hide();
+    });
+
+    $("#loader_filter").show();
+
+    var json_data = {
+        'CAMERA_ID'         : fields["CAMERA_ID"].input.val(),
+        'YEAR_SELECT'       : fields["YEAR_SELECT"].input.val(),
+        'MONTH_SELECT'      : fields["MONTH_SELECT"].input.val(),
+        'DAY_SELECT'        : fields["DAY_SELECT"].input.val(),
+        'HOUR_SELECT'       : fields["HOUR_SELECT"].input.val(),
+        'FILTER_DETECTIONS' : fields["FILTER_DETECTIONS"].input.prop("checked"),
+        'FILTER_AURORA'     : fields["FILTER_AURORA"].input.prop("checked"),
+        'FILTER_AURORA_MIN' : fields["FILTER_AURORA_MIN"].input.val(),
+    };
+
+    hour_change(json_data);
+});
+
+
+function syncCalendarFromSelects() {
+    var year = $("#YEAR_SELECT").val();
+    var month = $("#MONTH_SELECT").val();
+    var day = $("#DAY_SELECT").val();
+    
+    var picker = document.getElementById("cally-picker");
+    if (picker) {
+        if (year && month) {
+            const validDays = [];
+            $("#DAY_SELECT option").each(function() {
+                const val = parseInt($(this).val());
+                if (!isNaN(val)) {
+                    validDays.push(val);
+                }
+            });
+
+            const yearInt = parseInt(year);
+            const monthInt = parseInt(month) - 1;
+
+            picker.isDateDisallowed = (date) => {
+                if (date.getUTCFullYear() === yearInt && date.getUTCMonth() === monthInt) {
+                    return !validDays.includes(date.getUTCDate());
+                }
+                return false;
+            };
+
+            const years = $("#YEAR_SELECT option").map(function() { 
+                const val = $(this).val();
+                return val ? parseInt(val) : null; 
+            }).get().filter(v => v !== null && !isNaN(v));
+
+            if (years.length > 0) {
+                const minYear = Math.min(...years);
+                const maxYear = Math.max(...years);
+                picker.min = `${minYear}-01-01`;
+                picker.max = `${maxYear}-12-31`;
+            } else {
+                picker.min = "1970-01-01";
+                picker.max = "2099-12-31";
+            }
+
+            if (day) {
+                var formattedDate = year + "-" + month.padStart(2, '0') + "-" + day.padStart(2, '0');
+                picker.value = formattedDate;
+                $("#date-picker-label").text(formattedDate);
+            } else {
+                picker.value = "";
+                picker.focusedDate = year + "-" + month.padStart(2, '0') + "-01";
+                $("#date-picker-label").text(year + "-" + month.padStart(2, '0'));
+            }
+        } else {
+            picker.isDateDisallowed = () => true;
+            picker.min = "1970-01-01";
+            picker.max = "2099-12-31";
+            picker.value = "";
+            $("#date-picker-label").text("No Data");
+        }
+    }
+}
+
+function day_change(json_data, targetSelect) {
+    json_data = with_asi676mc_gallery_filters(json_data);
+    $.ajax({
+        type: "POST",
+        url: "{{ url_for('indi_allsky.ajax_gallery_view') }}",
+        contentType: "application/json",
+        data: JSON.stringify(json_data),
+        success: function(rdata){
+            $("#HOUR_SELECT").empty()
+            rdata['HOUR_SELECT'].forEach(item => {
+                $("#HOUR_SELECT").append($('<option />', {'value' : item[0]}).text(item[1]));
+            });
+
+            if (targetSelect && targetSelect.hour) {
+                $("#HOUR_SELECT").val(targetSelect.hour);
+            } else {
+                if (! newest_entry_default) {
+                    // oldest entry is last index
+                    hour_options_count = $('#HOUR_SELECT option').length;
+                    $("#HOUR_SELECT").val($("#HOUR_SELECT")[0].options[hour_options_count - 1].value);
+                }
+            }
+
+            gallery_data = [];
+            rdata['IMAGE_DATA'].forEach(item => {
+                gallery_data.push({
+                    'src' : item['url'],
+                    'width' : item['width'],
+                    'height' : item['height'],
+                    'alt' : item['date'],
+                });
+            });
+
+            populate_gallery(rdata['IMAGE_DATA']);
+            syncCalendarFromSelects();
+            $("#loader_filter").hide();
+        },
+        error: function(rdata){
+            var errors = JSON.parse(rdata.responseText);
+            Object.keys(errors).forEach((key) => {
+                fields[key].input.addClass('tw:border-error');
+                fields[key].error.html(errors[key][0]).show();
+            });
+        },
+    });
+}
+
+
+$("#DAY_SELECT").on("change", function() {
+    // hide all errors
+    successMessage.hide();
+    Object.keys(fields).forEach((key) => {
+        fields[key].error.hide();
+    });
+
+    $("#loader_filter").show();
+
+    var json_data = {
+        'CAMERA_ID'         : fields["CAMERA_ID"].input.val(),
+        'YEAR_SELECT'       : fields["YEAR_SELECT"].input.val(),
+        'MONTH_SELECT'      : fields["MONTH_SELECT"].input.val(),
+        'DAY_SELECT'        : fields["DAY_SELECT"].input.val(),
+        'FILTER_DETECTIONS' : fields["FILTER_DETECTIONS"].input.prop("checked"),
+        'FILTER_AURORA'     : fields["FILTER_AURORA"].input.prop("checked"),
+        'FILTER_AURORA_MIN' : fields["FILTER_AURORA_MIN"].input.val(),
+    };
+
+    day_change(json_data);
+});
+
+
+function month_change(json_data, targetSelect) {
+    json_data = with_asi676mc_gallery_filters(json_data);
+    $.ajax({
+        type: "POST",
+        url: "{{ url_for('indi_allsky.ajax_gallery_view') }}",
+        contentType: "application/json",
+        data: JSON.stringify(json_data),
+        success: function(rdata){
+            $("#DAY_SELECT").empty()
+            rdata['DAY_SELECT'].forEach(item => {
+                $("#DAY_SELECT").append($('<option />', {'value' : item[0]}).text(item[1]));
+            });
+
+            $("#HOUR_SELECT").empty()
+            rdata['HOUR_SELECT'].forEach(item => {
+                $("#HOUR_SELECT").append($('<option />', {'value' : item[0]}).text(item[1]));
+            });
+
+            if (targetSelect && targetSelect.day) {
+                $("#DAY_SELECT").val(targetSelect.day);
+                var next_json = {
+                    'CAMERA_ID'         : json_data.CAMERA_ID,
+                    'YEAR_SELECT'       : json_data.YEAR_SELECT,
+                    'MONTH_SELECT'      : json_data.MONTH_SELECT,
+                    'DAY_SELECT'        : targetSelect.day,
+                    'FILTER_DETECTIONS' : json_data.FILTER_DETECTIONS,
+                    'FILTER_AURORA'     : json_data.FILTER_AURORA,
+                    'FILTER_AURORA_MIN' : json_data.FILTER_AURORA_MIN,
+                };
+                day_change(next_json, targetSelect);
+            } else {
+                day_options_count = $('#DAY_SELECT option').length;
+                hour_options_count = $('#HOUR_SELECT option').length;
+                if (! newest_entry_default && day_options_count > 0 && hour_options_count > 0) {
+                    $("#DAY_SELECT").val($("#DAY_SELECT")[0].options[day_options_count - 1].value);
+                    $("#HOUR_SELECT").val($("#HOUR_SELECT")[0].options[hour_options_count - 1].value).change();
+                } else {
+                    populate_gallery(rdata['IMAGE_DATA']);
+                    syncCalendarFromSelects();
+                    $("#loader_filter").hide();
+                }
+            }
+        },
+        error: function(rdata){
+            var errors = JSON.parse(rdata.responseText);
+            Object.keys(errors).forEach((key) => {
+                fields[key].input.addClass('tw:border-error');
+                fields[key].error.html(errors[key][0]).show();
+            });
+        },
+    });
+}
+
+
+$("#MONTH_SELECT").on("change", function() {
+    // hide all errors
+    successMessage.hide();
+    Object.keys(fields).forEach((key) => {
+        fields[key].error.hide();
+    });
+
+    $("#loader_filter").show();
+
+    var json_data = {
+        'CAMERA_ID'         : fields["CAMERA_ID"].input.val(),
+        'YEAR_SELECT'       : fields["YEAR_SELECT"].input.val(),
+        'MONTH_SELECT'      : fields["MONTH_SELECT"].input.val(),
+        'FILTER_DETECTIONS' : fields["FILTER_DETECTIONS"].input.prop("checked"),
+        'FILTER_AURORA'     : fields["FILTER_AURORA"].input.prop("checked"),
+        'FILTER_AURORA_MIN' : fields["FILTER_AURORA_MIN"].input.val(),
+    };
+
+    month_change(json_data);
+});
+
+
+function year_change(json_data, targetSelect) {
+    json_data = with_asi676mc_gallery_filters(json_data);
+    $.ajax({
+        type: "POST",
+        url: "{{ url_for('indi_allsky.ajax_gallery_view') }}",
+        contentType: "application/json",
+        data: JSON.stringify(json_data),
+        success: function(rdata){
+            $("#MONTH_SELECT").empty()
+            rdata['MONTH_SELECT'].forEach(item => {
+                $("#MONTH_SELECT").append($('<option />', {'value' : item[0]}).text(item[1]));
+            });
+
+            $("#DAY_SELECT").empty()
+            rdata['DAY_SELECT'].forEach(item => {
+                $("#DAY_SELECT").append($('<option />', {'value' : item[0]}).text(item[1]));
+            });
+
+            $("#HOUR_SELECT").empty()
+            rdata['HOUR_SELECT'].forEach(item => {
+                $("#HOUR_SELECT").append($('<option />', {'value' : item[0]}).text(item[1]));
+            });
+
+            if (targetSelect && targetSelect.month) {
+                $("#MONTH_SELECT").val(targetSelect.month);
+                var next_json = {
+                    'CAMERA_ID'         : json_data.CAMERA_ID,
+                    'YEAR_SELECT'       : json_data.YEAR_SELECT,
+                    'MONTH_SELECT'      : targetSelect.month,
+                    'FILTER_DETECTIONS' : json_data.FILTER_DETECTIONS,
+                    'FILTER_AURORA'     : json_data.FILTER_AURORA,
+                    'FILTER_AURORA_MIN' : json_data.FILTER_AURORA_MIN,
+                };
+                month_change(next_json, targetSelect);
+            } else {
+                month_options_count = $('#MONTH_SELECT option').length;
+                day_options_count = $('#DAY_SELECT option').length;
+                hour_options_count = $('#HOUR_SELECT option').length;
+                if (! newest_entry_default && month_options_count > 0 && day_options_count > 0 && hour_options_count > 0) {
+                    $("#MONTH_SELECT").val($("#MONTH_SELECT")[0].options[month_options_count - 1].value);
+                    $("#DAY_SELECT").val($("#DAY_SELECT")[0].options[day_options_count - 1].value);
+                    $("#HOUR_SELECT").val($("#HOUR_SELECT")[0].options[hour_options_count - 1].value).change();
+                } else {
+                    populate_gallery(rdata['IMAGE_DATA']);
+                    syncCalendarFromSelects();
+                    $("#loader_filter").hide();
+                }
+            }
+        },
+        error: function(rdata){
+            var errors = JSON.parse(rdata.responseText);
+            Object.keys(errors).forEach((key) => {
+                fields[key].input.addClass('tw:border-error');
+                fields[key].error.html(errors[key][0]).show();
+            });
+        },
+    });
+};
+
+
+$("#YEAR_SELECT").on("change", function() {
+    // hide all errors
+    successMessage.hide();
+    Object.keys(fields).forEach((key) => {
+        fields[key].error.hide();
+    });
+
+    $("#loader_filter").show();
+
+    var json_data = {
+        'CAMERA_ID'         : fields["CAMERA_ID"].input.val(),
+        'YEAR_SELECT'       : fields["YEAR_SELECT"].input.val(),
+        'FILTER_DETECTIONS' : fields["FILTER_DETECTIONS"].input.prop("checked"),
+        'FILTER_AURORA'     : fields["FILTER_AURORA"].input.prop("checked"),
+        'FILTER_AURORA_MIN' : fields["FILTER_AURORA_MIN"].input.val(),
+    };
+
+    year_change(json_data);
+});
+
+
+$("#FILTER_DETECTIONS, #FILTER_AURORA, #FILTER_ASI676MC_REPAIRED, #FILTER_ASI676MC_EXCLUDED, #FILTER_ASI676MC_FAILED").on("change", function() {
+    // hide all errors
+    successMessage.hide();
+    Object.keys(fields).forEach((key) => {
+        fields[key].error.hide();
+    });
+
+    $("#loader_filter").show();
+
+    var json_data = {
+        'CAMERA_ID'          : fields["CAMERA_ID"].input.val(),
+        'FILTER_DETECTIONS'  : fields["FILTER_DETECTIONS"].input.prop("checked"),
+        'FILTER_AURORA'      : fields["FILTER_AURORA"].input.prop("checked"),
+        'FILTER_AURORA_MIN'  : fields["FILTER_AURORA_MIN"].input.val(),
+    };
+    json_data = with_asi676mc_gallery_filters(json_data);
+
+    $.ajax({
+        type: "POST",
+        url: "{{ url_for('indi_allsky.ajax_gallery_view') }}",
+        contentType: "application/json",
+        data: JSON.stringify(json_data),
+        success: function(rdata){
+            $("#YEAR_SELECT").empty()
+            rdata['YEAR_SELECT'].forEach(item => {
+                $("#YEAR_SELECT").append($('<option />', {'value' : item[0]}).text(item[1]));
+            });
+
+            $("#MONTH_SELECT").empty()
+            rdata['MONTH_SELECT'].forEach(item => {
+                $("#MONTH_SELECT").append($('<option />', {'value' : item[0]}).text(item[1]));
+            });
+
+            $("#DAY_SELECT").empty()
+            rdata['DAY_SELECT'].forEach(item => {
+                $("#DAY_SELECT").append($('<option />', {'value' : item[0]}).text(item[1]));
+            });
+
+            $("#HOUR_SELECT").empty()
+            rdata['HOUR_SELECT'].forEach(item => {
+                $("#HOUR_SELECT").append($('<option />', {'value' : item[0]}).text(item[1]));
+            });
+
+            populate_gallery(rdata['IMAGE_DATA']);
+            syncCalendarFromSelects();
+            $("#loader_filter").hide();
+        },
+        error: function(rdata){
+            var errors = JSON.parse(rdata.responseText);
+            Object.keys(errors).forEach((key) => {
+                fields[key].input.addClass('tw:border-error');
+                fields[key].error.html(errors[key][0]).show();
+            });
+        },
+    });
+});
+
+
+function init() {
+    var json_data = {
+        'CAMERA_ID'         : fields["CAMERA_ID"].input.val(),
+        'YEAR_SELECT'       : fields["YEAR_SELECT"].input.val(),
+        'FILTER_DETECTIONS' : fields["FILTER_DETECTIONS"].input.prop("checked"),
+        'FILTER_AURORA'     : fields["FILTER_AURORA"].input.prop("checked"),
+        'FILTER_AURORA_MIN' : fields["FILTER_AURORA_MIN"].input.val(),
+    };
+
+    // Attach listener for Cally calendar picker
+    var picker = document.getElementById("cally-picker");
+    if (picker) {
+        picker.addEventListener("change", function(e) {
+            var val = e.target.value;
+            if (val) {
+                var parts = val.split('-');
+                var yr = parts[0];
+                var mo = parseInt(parts[1], 10).toString();
+                var dy = parseInt(parts[2], 10).toString();
+
+                var currentYear = $("#YEAR_SELECT").val();
+                var currentMonth = $("#MONTH_SELECT").val();
+
+                if (yr === currentYear && mo === currentMonth) {
+                    if ($("#DAY_SELECT option[value='" + dy + "']").length === 0) {
+                        syncCalendarFromSelects();
+                        return;
+                    }
+
+                    $("#DAY_SELECT").val(dy);
+                    $("#date-picker-label").text(val);
+                    $("#cally-dropdown-details").removeAttr("open");
+
+                    $("#loader_filter").show();
+                    var next_json = {
+                        'CAMERA_ID'         : fields["CAMERA_ID"].input.val(),
+                        'YEAR_SELECT'       : yr,
+                        'MONTH_SELECT'      : mo,
+                        'DAY_SELECT'        : dy,
+                        'FILTER_DETECTIONS' : fields["FILTER_DETECTIONS"].input.prop("checked"),
+        'FILTER_AURORA'     : fields["FILTER_AURORA"].input.prop("checked"),
+        'FILTER_AURORA_MIN' : fields["FILTER_AURORA_MIN"].input.val(),
+                    };
+                    day_change(next_json, { year: yr, month: mo, day: dy });
+                    return;
+                }
+
+                if ($("#YEAR_SELECT option[value='" + yr + "']").length === 0) {
+                    $("#YEAR_SELECT").append($('<option />', {value: yr}).text(yr));
+                }
+                if ($("#MONTH_SELECT option[value='" + mo + "']").length === 0) {
+                    $("#MONTH_SELECT").append($('<option />', {value: mo}).text(mo));
+                }
+                if ($("#DAY_SELECT option[value='" + dy + "']").length === 0) {
+                    $("#DAY_SELECT").append($('<option />', {value: dy}).text(dy));
+                }
+
+                $("#YEAR_SELECT").val(yr);
+                $("#MONTH_SELECT").val(mo);
+                $("#DAY_SELECT").val(dy);
+
+                $("#date-picker-label").text(val);
+                $("#cally-dropdown-details").removeAttr("open");
+
+                // Trigger change starting from year to ensure all suboptions are fully loaded
+                var next_json = {
+                    'CAMERA_ID'         : fields["CAMERA_ID"].input.val(),
+                    'YEAR_SELECT'       : yr,
+                    'FILTER_DETECTIONS' : fields["FILTER_DETECTIONS"].input.prop("checked"),
+        'FILTER_AURORA'     : fields["FILTER_AURORA"].input.prop("checked"),
+        'FILTER_AURORA_MIN' : fields["FILTER_AURORA_MIN"].input.val(),
+                };
+                $("#loader_filter").show();
+                year_change(next_json, { year: yr, month: mo, day: dy });
+            }
+        });
+
+        picker.addEventListener("focusday", function(e) {
+            var newDate = e.detail;
+            if (!newDate) return;
+            var yr = newDate.getUTCFullYear().toString();
+            var mo = (newDate.getUTCMonth() + 1).toString();
+            var currentYear = $("#YEAR_SELECT").val();
+            var currentMonth = $("#MONTH_SELECT").val();
+            if (yr !== currentYear || mo !== currentMonth) {
+                if ($("#YEAR_SELECT option[value='" + yr + "']").length === 0) {
+                    const formattedMonth = String(currentMonth).padStart(2, '0');
+                    picker.focusedDate = `${currentYear}-${formattedMonth}-01`;
+                    return;
+                }
+                if (yr === currentYear && $("#MONTH_SELECT option[value='" + mo + "']").length === 0) {
+                    const formattedMonth = String(currentMonth).padStart(2, '0');
+                    picker.focusedDate = `${currentYear}-${formattedMonth}-01`;
+                    return;
+                }
+
+                if (yr !== currentYear) {
+                    $("#YEAR_SELECT").val(yr);
+                    var json_data = {
+                        'CAMERA_ID'         : fields["CAMERA_ID"].input.val(),
+                        'YEAR_SELECT'       : yr,
+                        'FILTER_DETECTIONS' : fields["FILTER_DETECTIONS"].input.prop("checked"),
+        'FILTER_AURORA'     : fields["FILTER_AURORA"].input.prop("checked"),
+        'FILTER_AURORA_MIN' : fields["FILTER_AURORA_MIN"].input.val(),
+                    };
+                    $("#loader_filter").show();
+                    year_change(json_data, { year: yr, month: mo });
+                } else {
+                    $("#MONTH_SELECT").val(mo);
+                    var json_data = {
+                        'CAMERA_ID'         : fields["CAMERA_ID"].input.val(),
+                        'YEAR_SELECT'       : yr,
+                        'MONTH_SELECT'      : mo,
+                        'FILTER_DETECTIONS' : fields["FILTER_DETECTIONS"].input.prop("checked"),
+        'FILTER_AURORA'     : fields["FILTER_AURORA"].input.prop("checked"),
+        'FILTER_AURORA_MIN' : fields["FILTER_AURORA_MIN"].input.val(),
+                    };
+                    $("#loader_filter").show();
+                    month_change(json_data);
+                }
+            }
+        });
+    }
+
+    year_change(json_data);
+}
+
+
+function nextYear() {
+    var year_select_val = $("#YEAR_SELECT").val();
+
+    newest_entry_default = false;
+
+    $('#YEAR_SELECT option').each(function(index, element) {
+        if (index == 0 && element.value == year_select_val) {
+            console.log('At latest year');
+            return false;
+        } else if (element.value == year_select_val) {
+            console.log('Next year');
+            $("#YEAR_SELECT").val($("#YEAR_SELECT")[0].options[index - 1].value).change();
+            return false;
+        };
+    });
+}
+
+
+function previousYear() {
+    var year_select_val = $("#YEAR_SELECT").val();
+
+    newest_entry_default = true;
+
+    $('#YEAR_SELECT option').each(function(index, element) {
+        if (index == $("#YEAR_SELECT")[0].options.length - 1) {
+            console.log('At oldest year');
+            return false;
+        } else if (element.value == year_select_val) {
+            console.log('Previous year');
+            $("#YEAR_SELECT").val($("#YEAR_SELECT")[0].options[index + 1].value).change();
+            return false;
+        };
+    });
+}
+
+
+function nextMonth() {
+    var month_select_val = $("#MONTH_SELECT").val();
+
+    newest_entry_default = false;
+
+    $('#MONTH_SELECT option').each(function(index, element) {
+        if (index == 0 && element.value == month_select_val) {
+            console.log('At latest month');
+            nextYear();
+            return false;
+        } else if (element.value == month_select_val) {
+            console.log('Next month');
+            $("#MONTH_SELECT").val($("#MONTH_SELECT")[0].options[index - 1].value).change();
+            return false;
+        };
+    });
+}
+
+
+function previousMonth() {
+    var month_select_val = $("#MONTH_SELECT").val();
+
+    newest_entry_default = true;
+
+    $('#MONTH_SELECT option').each(function(index, element) {
+        if (index == $("#MONTH_SELECT")[0].options.length - 1) {
+            console.log('At oldest month');
+            previousYear();
+            return false;
+        } else if (element.value == month_select_val) {
+            console.log('Previous month');
+            $("#MONTH_SELECT").val($("#MONTH_SELECT")[0].options[index + 1].value).change();
+            return false;
+        };
+    });
+}
+
+
+function nextDay() {
+    var day_select_val = $("#DAY_SELECT").val();
+
+    newest_entry_default = false;
+
+    $('#DAY_SELECT option').each(function(index, element) {
+        if (index == 0 && element.value == day_select_val) {
+            console.log('At latest day');
+            nextMonth();
+            return false;
+        } else if (element.value == day_select_val) {
+            console.log('Next day');
+            $("#DAY_SELECT").val($("#DAY_SELECT")[0].options[index - 1].value).change();
+            return false;
+        };
+    });
+}
+
+
+function previousDay() {
+    var day_select_val = $("#DAY_SELECT").val();
+
+    newest_entry_default = true;
+
+    $('#DAY_SELECT option').each(function(index, element) {
+        if (index == $("#DAY_SELECT")[0].options.length - 1) {
+            console.log('At oldest day');
+            previousMonth();
+            return false;
+        } else if (element.value == day_select_val) {
+            console.log('Previous day');
+            $("#DAY_SELECT").val($("#DAY_SELECT")[0].options[index + 1].value).change();
+            return false;
+        };
+    });
+}
+
+
+function nextHour() {
+    scrollToTop();
+    var hour_select_val = $("#HOUR_SELECT").val();
+
+    newest_entry_default = false;
+
+    $('#HOUR_SELECT option').each(function(index, element) {
+        if (index == 0 && element.value == hour_select_val) {
+            console.log('At latest hour');
+            nextDay();
+            return false;
+        } else if (element.value == hour_select_val) {
+            console.log('Next hour');
+            $("#HOUR_SELECT").val($("#HOUR_SELECT")[0].options[index - 1].value).change();
+            return false;
+        };
+    });
+}
+
+
+function previousHour() {
+    scrollToTop();
+    var hour_select_val = $("#HOUR_SELECT").val();
+
+    newest_entry_default = true;
+
+    $('#HOUR_SELECT option').each(function(index, element) {
+        if (index == $("#HOUR_SELECT")[0].options.length - 1) {
+            console.log('At oldest hour');
+            previousDay();
+            return false;
+        } else if (element.value == hour_select_val) {
+            console.log('Previous hour');
+            $("#HOUR_SELECT").val($("#HOUR_SELECT")[0].options[index + 1].value).change();
+            return false;
+        };
+    });
+}
+
+
+$( document ).ready(function() {
+    // Uncheck checkboxes
+    $("#FILTER_DETECTIONS, #FILTER_AURORA").prop('checked', false);
+
+    $("#FILTER_AURORA_MIN").on("change", function() {
+        if ($("#FILTER_AURORA").prop("checked")) {
+            $("#FILTER_AURORA").trigger("change");
+        }
+    });
+    $("#FILTER_ASI676MC_REPAIRED, #FILTER_ASI676MC_EXCLUDED, #FILTER_ASI676MC_FAILED")
+        .prop('checked', false)
+        .prop('disabled', !asi676mc_repair_gallery_enabled);
+
+    init();
+
+    // jQuery's .on("toggle") doesn't fire on <details> elements (non-bubbling native event).
+    var callyDropdown = document.getElementById("cally-dropdown-details");
+    if (callyDropdown) {
+        callyDropdown.addEventListener("toggle", function() {
+            if (this.open) {
+                syncCalendarFromSelects();
+            }
+        });
+    }
+
+    window.customElements.whenDefined('calendar-date').then(() => {
+        syncCalendarFromSelects();
+    });
+
+
+    $(document).keydown(function(e) {
+        if (lightbox && lightbox.pswp) return;
+
+        var key_press = {
+            "up"    : 38,
+            "down"  : 40,
+
+            "w"     : 87,  // up
+            "s"     : 83,  // down
+
+            "j"     : 74,  // down
+            "k"     : 75,  // up
+        };
+
+        switch (e.which) {
+            // arrow keys
+            case key_press.up:
+                nextHour();
+                break;
+            case key_press.down:
+                previousHour();
+                break;
+
+            // wasd
+            case key_press.w:
+                nextHour();
+                break;
+            case key_press.s:
+                previousHour();
+                break;
+
+            // vim bindings
+            case key_press.j:
+                previousHour();
+                break;
+            case key_press.k:
+                nextHour();
+                break;
+
+            default:
+                return;
+        }
+
+        e.preventDefault();
+    });
+
+});
+
+</script>
+
+{% endblock %}
