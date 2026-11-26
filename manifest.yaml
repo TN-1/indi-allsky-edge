@@ -275,6 +275,10 @@ pull_requests:
     title: "fix(ui): improve accessibility, daisyUI v5 hygiene, navigation, and mobile states"
     author: "TN-1"
 
+  - id: 3382
+    title: "feat(telemetry): add OpenTelemetry OTLP/HTTP traces, metrics, and logs"
+    author: "TN-1"
+
   - id: 3116
     title: "Feature: Test Suite"
     author: "TN-1"
