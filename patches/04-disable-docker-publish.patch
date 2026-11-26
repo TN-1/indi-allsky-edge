@@ -1,0 +1,12 @@
+diff --git a/.github/workflows/package-deb.yml b/.github/workflows/package-deb.yml
+index 249e6fb50..a4a05ced2 100644
+--- a/.github/workflows/package-deb.yml
++++ b/.github/workflows/package-deb.yml
+@@ -664,6 +664,7 @@ jobs:
+ 
+   publish-docker:
+     name: Build & Publish Docker Image (GHCR)
++    if: false  # Disabled for indi-allsky-edge
+     needs: [deploy-apt-repo]
+     permissions:
+       contents: read

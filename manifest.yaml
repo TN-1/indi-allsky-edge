@@ -300,3 +300,6 @@ reconciliation_patches:
 
   - file: "patches/03-reconcile-3342-3257.patch"
     description: "Remove hidden attribute from #latest-image in index_img.html when using #3257 inline script"
+
+  - file: "patches/04-disable-docker-publish.patch"
+    description: "Disable publish-docker job on edge"
