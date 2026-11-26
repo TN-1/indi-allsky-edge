@@ -1,5 +1,5 @@
 diff --git a/.github/workflows/package-deb.yml b/.github/workflows/package-deb.yml
-index 89711abc..d02bf50c 100644
+index 89711abc7..71d17d0b1 100644
 --- a/.github/workflows/package-deb.yml
 +++ b/.github/workflows/package-deb.yml
 @@ -2,11 +2,11 @@ name: Build & Package Debian Release (.deb)
@@ -66,9 +66,16 @@ index 89711abc..d02bf50c 100644
              IS_RELEASE="false"
            fi
  
-@@ -126,6 +134,12 @@ jobs:
+@@ -125,7 +133,28 @@ jobs:
+ 
        - name: Generate Release Notes Summary & Git Changelog
          run: |
++          if [[ "${{ github.ref }}" == refs/tags/pr-* ]] || [[ "${{ github.ref }}" == refs/tags/v* ]] || [[ "${{ github.ref }}" == refs/tags/indi_v* ]]; then
++            RELEASE_TAG="${GITHUB_REF_NAME}"
++          else
++            RELEASE_TAG="edge"
++          fi
++          ASSET_VER="${VERSION//\~/.}"
            {
 +            if [ -f "EDGE_COMPOSITION.md" ]; then
 +              cat EDGE_COMPOSITION.md
@@ -76,10 +83,19 @@ index 89711abc..d02bf50c 100644
 +              echo "---"
 +              echo ""
 +            fi
++            echo "### How to Install"
++            echo ""
++            echo '```bash'
++            echo 'ARCH=$(dpkg --print-architecture)'
++            echo 'CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME}}")'
++            echo "wget \"https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/indi-allsky-edge_${ASSET_VER}+\${CODENAME}_\${ARCH}.deb\""
++            echo "sudo apt install -y \"./indi-allsky-edge_${ASSET_VER}+\${CODENAME}_\${ARCH}.deb\""
++            echo '```'
++            echo ""
              echo "### Bundled INDI & Driver Versions"
              echo "* **INDI Core / Server**: \`${{ env.INDI_CORE_TAG }}\`"
              echo "* **INDI 3rd-Party Drivers**: \`${{ env.INDI_3RDPARTY_TAG }}\` (ZWO ASI, QHY, Player One, ToupTek, SVBONY, Starlight Xpress, etc.)"
-@@ -391,7 +405,9 @@ jobs:
+@@ -391,7 +420,9 @@ jobs:
      name: Publish Releases
      needs: [check-changes, build-deb]
      runs-on: ubuntu-latest
@@ -90,7 +106,7 @@ index 89711abc..d02bf50c 100644
      steps:
        - name: Checkout Code
          uses: actions/checkout@v7
-@@ -412,23 +428,32 @@ jobs:
+@@ -412,23 +443,32 @@ jobs:
          env:
            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
  
@@ -133,7 +149,7 @@ index 89711abc..d02bf50c 100644
              --prerelease \
              --target "${{ github.sha }}" \
              $NOTES_FLAG
-@@ -437,7 +462,7 @@ jobs:
+@@ -437,7 +477,7 @@ jobs:
      name: Build & Deploy APT Repo (Cloudflare R2)
      needs: [check-changes, build-deb, publish]
      runs-on: ubuntu-latest

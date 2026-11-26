@@ -37,7 +37,7 @@ from wtforms import DateTimeLocalField
 from wtforms import FileField
 from wtforms.widgets import PasswordInput
 from wtforms.widgets import NumberInput
-from wtforms.validators import DataRequired
+from wtforms.validators import Length, DataRequired
 from wtforms.validators import NumberRange
 #from wtforms.validators import regexp as validator_regexp
 from wtforms.validators import ValidationError
@@ -1383,6 +1383,9 @@ def LONGTERM_KEOGRAM__OFFSET_Y_validator(form, field):
 
 
 def LONGTERM_KEOGRAM__MONTH_LABEL_TEMPLATE_validator(form, field):
+    if not field.data:
+        return
+
     now = datetime.now()
 
     test_data = {
@@ -2691,10 +2694,16 @@ def SYNCAPI__UPLOAD_IMAGE_validator(form, field):
 
 
 def FILETRANSFER__LIBCURL_OPTIONS_validator(form, field):
-    try:
-        json_data = json.loads(field.data)
-    except json.decoder.JSONDecodeError as e:
-        raise ValidationError(str(e))
+    if not field.data:
+        return
+
+    if isinstance(field.data, dict):
+        json_data = field.data
+    else:
+        try:
+            json_data = json.loads(field.data)
+        except (json.decoder.JSONDecodeError, TypeError) as e:
+            raise ValidationError(str(e))
 
 
     import pycurl
@@ -2939,6 +2948,27 @@ def SYNCAPI__BASEURL_validator(form, field):
         raise ValidationError('Do not sync to localhost, bad things happen')
 
 
+def ALLSKYTEAM_MAP_website_validator(form, field):
+    if not form.ALLSKYTEAM_MAP__ENABLE.data:
+        return
+    from ..global_allsky_map import validate_url, MapError
+    try:
+        validate_url(field.data or '')
+    except MapError as exc:
+        raise ValidationError(str(exc))
+
+
+def ALLSKYTEAM_MAP_image_validator(form, field):
+    if not form.ALLSKYTEAM_MAP__ENABLE.data:
+        return
+    from ..global_allsky_map import validate_url, validate_url_dependency, MapError
+    try:
+        validate_url(field.data or '', image=True)
+        validate_url_dependency(form.ALLSKYTEAM_MAP__WEBSITE_URL.data or '', field.data or '')
+    except MapError as exc:
+        raise ValidationError(str(exc))
+
+
 def ALLSKYMAP__API_URL_validator(form, field):
     if form.ALLSKYMAP__ENABLE.data and not field.data:
         raise ValidationError('API URL is required when Allsky Map integration is enabled')
@@ -3112,9 +3142,12 @@ def LIBCAMERA__AWB_validator(form, field):
 
 
 def LIBCAMERA__CAMERA_ID_validator(form, field):
+    if field.data is None or field.data == '':
+        return
+
     try:
         camera_id = int(field.data)
-    except ValueError:
+    except (ValueError, TypeError):
         raise ValidationError('Please enter a valid number')
 
     if camera_id < 0:
@@ -3262,29 +3295,6 @@ def CIRCULAR_DISPLAY__IMAGE_CIRCLE_DIAMETER_validator(form, field):
         raise ValidationError('Value must be 100 or greater')
 
 
-def FOCUSER__TRAVEL_LIMIT_DEGREES_validator(form, field):
-    if not isinstance(field.data, int):
-        raise ValidationError('Please enter a valid number')
-
-    if field.data < 10:
-        raise ValidationError('Value must be 10 or greater')
-
-    if field.data > 3600:
-        raise ValidationError('Value must be 3600 or less')
-
-
-def FOCUSER__SLACK_DEGREES_validator(form, field):
-    if not isinstance(field.data, int):
-        raise ValidationError('Please enter a valid number')
-
-    if field.data < 0:
-        raise ValidationError('Value must be 0 or greater')
-
-    limit = form.FOCUSER__TRAVEL_LIMIT_DEGREES.data
-    if isinstance(limit, int) and field.data >= limit:
-        raise ValidationError('Slack must be less than the travel limit')
-
-
 def FOCUSER__CLASSNAME_validator(form, field):
     if field.data not in list(zip(*form.FOCUSER__CLASSNAME_choices))[0]:
         raise ValidationError('Invalid selection')
@@ -3309,7 +3319,7 @@ def DEW_HEATER__LEVEL_validator(form, field):
 def DEW_HEATER__THOLD_DIFF_validator(form, field):
     try:
         int(field.data)
-    except ValueError:
+    except (ValueError, TypeError):
         raise ValidationError('Please enter a valid number')
 
 
@@ -3361,7 +3371,7 @@ def FAN__LEVEL_validator(form, field):
 def FAN__THOLD_DIFF_validator(form, field):
     try:
         int(field.data)
-    except ValueError:
+    except (ValueError, TypeError):
         raise ValidationError('Please enter a valid number')
 
 
@@ -3602,6 +3612,9 @@ def TEMP_SENSOR__HDC302X_HEATER_validator(form, field):
 
 
 def TEMP_SENSOR__SI7021_HEATER_LEVEL_validator(form, field):
+    if field.data is None or field.data == '':
+        return
+
     try:
         data_str = str(field.data)
     except ValueError as e:
@@ -3613,9 +3626,12 @@ def TEMP_SENSOR__SI7021_HEATER_LEVEL_validator(form, field):
 
 
 def TEMP_SENSOR__TSL2561_GAIN_validator(form, field):
+    if field.data is None or field.data == '':
+        return
+
     try:
         data_i = int(field.data)
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
         raise ValidationError('ValueError: {0:s}'.format(str(e)))
 
     if data_i < 0:
@@ -3626,9 +3642,12 @@ def TEMP_SENSOR__TSL2561_GAIN_validator(form, field):
 
 
 def TEMP_SENSOR__TSL2561_INT_validator(form, field):
+    if field.data is None or field.data == '':
+        return
+
     try:
         data_i = int(field.data)
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
         raise ValidationError('ValueError: {0:s}'.format(str(e)))
 
     if data_i < 0:
@@ -3832,10 +3851,16 @@ def SATELLITE_TRACK__LABEL_LIMIT_validator(form, field):
 
 
 def INDI_CONFIG_DEFAULTS_validator(form, field):
-    try:
-        json_data = json.loads(field.data)
-    except json.decoder.JSONDecodeError as e:
-        raise ValidationError(str(e))
+    if not field.data:
+        return
+
+    if isinstance(field.data, dict):
+        json_data = field.data
+    else:
+        try:
+            json_data = json.loads(field.data)
+        except (json.decoder.JSONDecodeError, TypeError) as e:
+            raise ValidationError(str(e))
 
 
     for k in json_data.keys():
@@ -5235,6 +5260,14 @@ class IndiAllskyConfigForm(FlaskForm):
     SYNCAPI__UPLOAD_VIDEO            = BooleanField('Transfer videos', render_kw={'disabled' : 'disabled'})
     SYNCAPI__CONNECT_TIMEOUT         = FloatField('Connect Timeout', validators=[DataRequired(), SYNCAPI__TIMEOUT_validator])
     SYNCAPI__TIMEOUT                 = FloatField('Read Timeout', validators=[DataRequired(), SYNCAPI__TIMEOUT_validator])
+    ALLSKYTEAM_MAP__ENABLE       = BooleanField('Enable publication')
+    ALLSKYTEAM_MAP__LOCATION_ACCURACY = SelectField('Location accuracy', default='legacy', choices=[
+        ('legacy', 'Round to 2 decimal places (default)'), ('exact', 'Exact saved location'),
+        ('0.5km', 'Approximate 0.5 km grid'), ('1km', 'Approximate 1 km grid'),
+        ('2km', 'Approximate 2 km grid'), ('5km', 'Approximate 5 km grid')])
+    ALLSKYTEAM_MAP__IMAGE_URL    = StringField('Image URL', validators=[ALLSKYTEAM_MAP_image_validator, Length(max=2048)])
+    ALLSKYTEAM_MAP__EQUIPMENT    = StringField('Equipment', validators=[Length(max=512)])
+    ALLSKYTEAM_MAP__WEBSITE_URL            = StringField('Website URL', validators=[ALLSKYTEAM_MAP_website_validator, Length(max=2048)])
     ALLSKYMAP__ENABLE                = BooleanField('Enable Allsky Map Ping')
     ALLSKYMAP__API_URL               = StringField('API URL', validators=[ALLSKYMAP__API_URL_validator])
     ALLSKYMAP__API_KEY               = PasswordField('API Key', widget=PasswordInput(hide_value=False), validators=[ALLSKYMAP__API_KEY_validator], render_kw={'autocomplete' : 'new-password'})
@@ -5333,8 +5366,6 @@ class IndiAllskyConfigForm(FlaskForm):
     FOCUSER__GPIO_PIN_3              = StringField('GPIO Pin 3', validators=[DEVICE_PIN_NAME_validator])
     FOCUSER__GPIO_PIN_4              = StringField('GPIO Pin 4', validators=[DEVICE_PIN_NAME_validator])
     FOCUSER__I2C_ADDRESS             = StringField('I2C Address', validators=[DataRequired(), I2C_ADDRESS_validator])
-    FOCUSER__TRAVEL_LIMIT_DEGREES    = IntegerField('Lens Travel Limit (degrees each way)', validators=[FOCUSER__TRAVEL_LIMIT_DEGREES_validator])
-    FOCUSER__SLACK_DEGREES           = IntegerField('Gear Slack (degrees)', validators=[FOCUSER__SLACK_DEGREES_validator])
     DEW_HEATER__CLASSNAME            = SelectField('Dew Heater', choices=DEW_HEATER__CLASSNAME_choices, validators=[DEW_HEATER__CLASSNAME_validator])
     DEW_HEATER__ENABLE_DAY           = BooleanField('Enable Daytime')
     DEW_HEATER__I2C_ADDRESS          = StringField('I2C Address', validators=[DataRequired(), I2C_ADDRESS_validator])
@@ -5778,27 +5809,31 @@ class IndiAllskyConfigForm(FlaskForm):
 
 
         # check cropping
-        mod_image_crop_x = (self.IMAGE_CROP_ROI_X2.data - self.IMAGE_CROP_ROI_X1.data) % 2
-        if mod_image_crop_x:
-            self.IMAGE_CROP_ROI_X2.errors.append('X coordinates must be divisible by 2')
-            result = False
+        if self.IMAGE_CROP_ROI_X1.data is not None and self.IMAGE_CROP_ROI_X2.data is not None:
+            mod_image_crop_x = (self.IMAGE_CROP_ROI_X2.data - self.IMAGE_CROP_ROI_X1.data) % 2
+            if mod_image_crop_x:
+                self.IMAGE_CROP_ROI_X2.errors.append('X coordinates must be divisible by 2')
+                result = False
 
-        mod_image_crop_y = (self.IMAGE_CROP_ROI_Y2.data - self.IMAGE_CROP_ROI_Y1.data) % 2
-        if mod_image_crop_y:
-            self.IMAGE_CROP_ROI_Y2.errors.append('Y coordinates must be divisible by 2')
-            result = False
+        if self.IMAGE_CROP_ROI_Y1.data is not None and self.IMAGE_CROP_ROI_Y2.data is not None:
+            mod_image_crop_y = (self.IMAGE_CROP_ROI_Y2.data - self.IMAGE_CROP_ROI_Y1.data) % 2
+            if mod_image_crop_y:
+                self.IMAGE_CROP_ROI_Y2.errors.append('Y coordinates must be divisible by 2')
+                result = False
 
 
         # border
-        if (self.IMAGE_BORDER__TOP.data + self.IMAGE_BORDER__BOTTOM.data) % 2:
-            self.IMAGE_BORDER__TOP.errors.append('Sum of top and bottom border must be divisible by 2')
-            self.IMAGE_BORDER__BOTTOM.errors.append('Sum of top and bottom border must be divisible by 2')
-            result = False
+        if self.IMAGE_BORDER__TOP.data is not None and self.IMAGE_BORDER__BOTTOM.data is not None:
+            if (self.IMAGE_BORDER__TOP.data + self.IMAGE_BORDER__BOTTOM.data) % 2:
+                self.IMAGE_BORDER__TOP.errors.append('Sum of top and bottom border must be divisible by 2')
+                self.IMAGE_BORDER__BOTTOM.errors.append('Sum of top and bottom border must be divisible by 2')
+                result = False
 
-        if (self.IMAGE_BORDER__LEFT.data + self.IMAGE_BORDER__RIGHT.data) % 2:
-            self.IMAGE_BORDER__LEFT.errors.append('Sum of left and right border must be divisible by 2')
-            self.IMAGE_BORDER__RIGHT.errors.append('Sum of left and right border must be divisible by 2')
-            result = False
+        if self.IMAGE_BORDER__LEFT.data is not None and self.IMAGE_BORDER__RIGHT.data is not None:
+            if (self.IMAGE_BORDER__LEFT.data + self.IMAGE_BORDER__RIGHT.data) % 2:
+                self.IMAGE_BORDER__LEFT.errors.append('Sum of left and right border must be divisible by 2')
+                self.IMAGE_BORDER__RIGHT.errors.append('Sum of left and right border must be divisible by 2')
+                result = False
 
 
         # file transfer validation
@@ -6159,7 +6194,7 @@ class IndiAllskyConfigForm(FlaskForm):
                 self.DEW_HEATER__THOLD_DIFF_MED.errors.append('MEDIUM must be less than LOW')
                 self.DEW_HEATER__THOLD_DIFF_LOW.errors.append('LOW must be greater than MEDIUM')
                 result = False
-        except ValueError:
+        except (ValueError, TypeError):
             # integer validation is caught later
             pass
 
@@ -6329,7 +6364,7 @@ class IndiAllskyConfigForm(FlaskForm):
                 self.FAN__THOLD_DIFF_MED.errors.append('MEDIUM must be greater than LOW')
                 self.FAN__THOLD_DIFF_LOW.errors.append('LOW must be less than MEDIUM')
                 result = False
-        except ValueError:
+        except (ValueError, TypeError):
             # integer validation is caught later
             pass
 
@@ -8128,6 +8163,7 @@ class IndiAllskyVideoViewer(FlaskForm):
                 'youtube_uploaded'  : bool(data.get('youtube_id', False)),
                 'note'              : entry_note,
                 'tags'              : entry_tags,
+                'chart_summary'     : data.get('chart_summary') if v.night else None,
             }
             videos_data.append(entry)
 
@@ -8604,6 +8640,7 @@ class IndiAllskyMiniVideoViewer(FlaskForm):
                 'avg_stars'         : int(data.get('avg_stars', 0)),
                 'avg_sqm'           : int(data.get('avg_sqm', 0)),
                 'youtube_uploaded'  : bool(data.get('youtube_id', False)),
+                'chart_summary'     : data.get('chart_summary') if v.night else None,
             }
             videos_data.append(entry)
 
@@ -8686,7 +8723,7 @@ class IndiAllskyTimelapseGeneratorForm_old(FlaskForm):
 
 
     def __init__(self, *args, **kwargs):
-        super(IndiAllskyTimelapseGeneratorForm, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.camera_id = kwargs['camera_id']
 
@@ -8972,7 +9009,7 @@ class IndiAllskyTimelapseGeneratorForm(FlaskForm):
 
 
     def __init__(self, *args, **kwargs):
-        super(IndiAllskyTimelapseGeneratorForm, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
         self.camera_id = kwargs['camera_id']
 
