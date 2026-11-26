@@ -283,6 +283,10 @@ pull_requests:
     title: "feat(docs): embed offline wiki viewer in Web UI and generate .deb man pages"
     author: "TN-1"
 
+  - id: 3384
+    title: "feat(focuser): add DRV8825 driver for 28BYJ-48 and NEMA17"
+    author: "TN-1"
+
   - id: 3116
     title: "Feature: Test Suite"
     author: "TN-1"
