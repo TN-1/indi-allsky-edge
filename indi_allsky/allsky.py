@@ -1816,8 +1816,9 @@ class IndiAllSky(object):
         if self.smoke_tasks_time < now_time:
             self.smoke_tasks_time = now_time + self.smoke_tasks_offset
 
-            logger.info('Creating smoke update task')
-            self._updateSmokeData()
+            if self.config.get('SMOKE_ENABLE', True):
+                logger.info('Creating smoke update task')
+                self._updateSmokeData()
 
 
         # satellite tle data update
