@@ -71,5 +71,6 @@ testing/
 tests/
 service/
 html/
+tools/
 setup.sh
 README.md

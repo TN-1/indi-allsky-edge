@@ -35,6 +35,7 @@ docker/passwd_file
 de421.bsp
 *.h5
 node_modules/
+.coverage
 
 # Debian build artifacts
 debian/.debhelper/
