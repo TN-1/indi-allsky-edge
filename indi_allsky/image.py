@@ -916,6 +916,9 @@ class ImageWorker(Process):
                 for aircraft in self.adsb_aircraft_list:
                     image_add_data['aircraft'].append(aircraft)
 
+            if self.image_processor.last_satellites:
+                image_add_data['satellites'] = list(self.image_processor.last_satellites)
+
 
             if self.star_alignment is not None:
                 image_add_data['star_alignment'] = self.alignment_metadata()
