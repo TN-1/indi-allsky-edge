@@ -281,3 +281,7 @@ def flask_app():
 def db(flask_app):
     from indi_allsky.flask import db as _db
     return _db
+
+
+def pytest_configure(config):
+    config.addinivalue_line('markers', 'app: needs Flask and the web requirements (run with -m app)')
