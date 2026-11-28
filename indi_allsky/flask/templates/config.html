@@ -1041,6 +1041,10 @@ $('#form_config').on('submit', function() {
     });
     json_data.SYNCAPI_SCHEDULE = window.indiAllskySync.schedulePayload(document);
 
+    if (typeof collectAdditionalFans === 'function') {
+        json_data['FANS'] = collectAdditionalFans();
+    }
+
     // reset option
     $("#RELOAD_ON_SAVE").prop('checked', false);
 
