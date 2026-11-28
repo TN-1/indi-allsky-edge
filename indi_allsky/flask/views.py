@@ -2843,10 +2843,12 @@ class JsonImageLoopView(JsonView):
             timestamp = int(datetime.timestamp(self.camera_now))
 
         ts_dt = datetime.fromtimestamp(timestamp + 3)  # allow some jitter
-        if request.args.get('virtualsky') == '1' and request.args.get('timestamp', type=int):
-            # The gallery link identifies a captured second. A faster camera can
-            # already have another frame inside the live polling jitter window.
+        history_dir = request.args.get('history', '')
+        if request.args.get('virtualsky') == '1' and request.args.get('timestamp', type=int) and not history_dir:
+            # Exact-second lookup for gallery/permalink links.
             ts_dt = datetime.fromtimestamp(timestamp + 1)
+        elif history_dir in ('before', 'after') and request.args.get('timestamp', type=int):
+            ts_dt = datetime.fromtimestamp(timestamp)
 
         # sanity check, limit to 4 hours
         if history_seconds > 14400:
@@ -2926,9 +2928,23 @@ class JsonImageLoopView(JsonView):
 
     def getLoopImages(self, camera_id, loop_dt, history_seconds):
         ts_minus_seconds = loop_dt - timedelta(seconds=history_seconds)
-        start_filter = self.model.createDate > ts_minus_seconds
-        if request.args.get('virtualsky') == '1' and request.args.get('timestamp', type=int):
+        history_dir = request.args.get('history', '')
+        if request.args.get('virtualsky') == '1' and request.args.get('timestamp', type=int) and not history_dir:
             start_filter = self.model.createDate >= loop_dt - timedelta(seconds=1)
+            end_filter = self.model.createDate < loop_dt
+            order_col = self.model.createDate.desc()
+        elif history_dir == 'after' and request.args.get('timestamp', type=int):
+            start_filter = self.model.createDate > loop_dt
+            end_filter = self.model.createDate <= loop_dt + timedelta(seconds=history_seconds)
+            order_col = self.model.createDate.asc()
+        elif history_dir == 'before' and request.args.get('timestamp', type=int):
+            start_filter = self.model.createDate > ts_minus_seconds
+            end_filter = self.model.createDate < loop_dt
+            order_col = self.model.createDate.desc()
+        else:
+            start_filter = self.model.createDate > ts_minus_seconds
+            end_filter = self.model.createDate < loop_dt
+            order_col = self.model.createDate.desc()
 
         latest_images_q = self.model.query\
             .join(self.model.camera)\
@@ -2937,7 +2953,7 @@ class JsonImageLoopView(JsonView):
                     IndiAllSkyDbCameraTable.id == camera_id,
                     self.model.exclude == sa_false(),
                     start_filter,
-                    self.model.createDate < loop_dt,
+                    end_filter,
                 )
             )
 
@@ -2960,7 +2976,7 @@ class JsonImageLoopView(JsonView):
 
 
         latest_images = latest_images_q\
-            .order_by(self.model.createDate.desc())\
+            .order_by(order_col)\
             .limit(self.limit)
 
 
