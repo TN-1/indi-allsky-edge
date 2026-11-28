@@ -7561,6 +7561,9 @@
     .tw\:sm\:flex-1 {
       flex: 1;
     }
+    .tw\:sm\:inline {
+      display: inline;
+    }
     .tw\:sm\:grid-cols-2 {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -7581,6 +7584,13 @@
     }
     .tw\:sm\:items-end {
       align-items: flex-end;
+    }
+    .tw\:sm\:px-8 {
+      padding-inline: calc(var(--tw-spacing) * 8);
+    }
+    .tw\:sm\:text-3xl {
+      font-size: var(--tw-text-3xl);
+      line-height: var(--tw-leading, var(--tw-text-3xl--line-height));
     }
     .tw\:sm\:p-6 {
       padding: calc(var(--tw-spacing) * 6);

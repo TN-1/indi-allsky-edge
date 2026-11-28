@@ -43,6 +43,15 @@ from ..temperature import database_temperature
 logger = logging.getLogger('indi_allsky')
 
 
+def image_capture_offset(data, fallback=None):
+    """Return the original camera offset in seconds when it is known."""
+    for value in ((data or {}).get('utc_offset'), fallback):
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and -86400 < value < 86400 and int(value) == value):
+            return int(value)
+    return None
+
+
 class miscDb(object):
     def __init__(self, config):
         self.config = config
@@ -315,6 +324,11 @@ class miscDb(object):
         night_val = bool(metadata['night'])  # integer to boolean
         adu_roi_val = bool(metadata['adu_roi'])
 
+        image_data = dict(metadata.get('data') or {})
+        offset = image_capture_offset(image_data, metadata.get('utc_offset'))
+        if offset is not None:
+            image_data['utc_offset'] = offset
+
         image = IndiAllSkyDbImageTable(
             camera_id=camera_id,
             filename=str(filename_p),
@@ -350,7 +364,7 @@ class miscDb(object):
             remote_url=metadata.get('remote_url'),
             s3_key=metadata.get('s3_key'),
             thumbnail_uuid=metadata.get('thumbnail_uuid'),
-            data=metadata.get('data', {}),
+            data=image_data,
         )
 
         db.session.add(image)
