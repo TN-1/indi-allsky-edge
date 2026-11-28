@@ -8,8 +8,6 @@
       "Segoe UI Symbol", "Noto Color Emoji";
     --tw-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
       "Courier New", monospace;
-    --tw-color-neutral-200: oklch(92.2% 0 none);
-    --tw-color-neutral-900: oklch(20.5% 0 none);
     --tw-color-neutral-950: oklch(14.5% 0 none);
     --tw-color-black: #000;
     --tw-color-white: #fff;
@@ -3257,6 +3255,9 @@
   .tw\:col-span-7 {
     grid-column: span 7 / span 7;
   }
+  .tw\:col-span-full {
+    grid-column: 1 / -1;
+  }
   @layer daisyui.l1.l2.l3 {
     .tw\:timeline-start {
       grid-column-start: 1;
@@ -5495,6 +5496,14 @@
     }
   }
   @layer daisyui.l1.l2.l3 {
+    .tw\:fieldset {
+      display: grid;
+      gap: calc(0.25rem * 1.5);
+      padding-block: 0.25rem;
+      font-size: 0.75rem;
+      grid-template-columns: 1fr;
+      grid-auto-rows: max-content;
+    }
     .tw\:card-title {
       display: flex;
       align-items: center;
@@ -5630,11 +5639,8 @@
   .tw\:h-\[18px\] {
     height: 18px;
   }
-  .tw\:h-\[550px\] {
-    height: 550px;
-  }
-  .tw\:h-\[650px\] {
-    height: 650px;
+  .tw\:h-\[60dvh\] {
+    height: 60dvh;
   }
   .tw\:h-auto {
     height: auto;
@@ -5678,6 +5684,9 @@
   .tw\:min-h-11 {
     min-height: calc(var(--tw-spacing) * 11);
   }
+  .tw\:min-h-72 {
+    min-height: calc(var(--tw-spacing) * 72);
+  }
   .tw\:min-h-\[50px\] {
     min-height: 50px;
   }
@@ -5700,9 +5709,6 @@
     min-height: 100vh;
   }
   @layer daisyui.l1.l2 {
-    .tw\:btn-block {
-      width: 100%;
-    }
     .tw\:loading-md {
       width: calc(var(--size-selector, 0.25rem) * 6);
     }
@@ -6299,6 +6305,12 @@
   .tw\:border-info {
     border-color: var(--color-info);
   }
+  .tw\:border-primary\/30 {
+    border-color: var(--color-primary);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-primary) 30%, transparent);
+    }
+  }
   .tw\:border-white\/15 {
     border-color: var(--tw-color-white);
     @supports (color: color-mix(in lab, red, red)) {
@@ -6506,9 +6518,6 @@
   .tw\:bg-neutral {
     background-color: var(--color-neutral);
   }
-  .tw\:bg-neutral-900 {
-    background-color: var(--tw-color-neutral-900);
-  }
   .tw\:bg-neutral-950 {
     background-color: var(--tw-color-neutral-950);
   }
@@ -6531,6 +6540,12 @@
     background-color: var(--color-primary);
     @supports (color: color-mix(in lab, red, red)) {
       background-color: color-mix(in oklab, var(--color-primary) 10%, transparent);
+    }
+  }
+  .tw\:bg-primary\/15 {
+    background-color: var(--color-primary);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-primary) 15%, transparent);
     }
   }
   .tw\:bg-primary\/20 {
@@ -6855,9 +6870,6 @@
       font-size: 0.625rem;
     }
   }
-  .tw\:text-\[0\.5rem\] {
-    font-size: 0.5rem;
-  }
   .tw\:text-\[0\.563rem\] {
     font-size: 0.563rem;
   }
@@ -7124,9 +7136,6 @@
   .tw\:text-info-content {
     color: var(--color-info-content);
   }
-  .tw\:text-neutral-200 {
-    color: var(--tw-color-neutral-200);
-  }
   .tw\:text-neutral-content {
     color: var(--color-neutral-content);
   }
@@ -7213,6 +7222,9 @@
   }
   .tw\:opacity-95 {
     opacity: 95%;
+  }
+  .tw\:opacity-100 {
+    opacity: 100%;
   }
   .tw\:shadow {
     --tw-shadow: 0 1px 3px 0 var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 1px 2px -1px var(--tw-shadow-color, rgb(0 0 0 / 0.1));
@@ -7607,6 +7619,13 @@
     --tw-outline-style: none;
     outline-style: none;
   }
+  .tw\:focus-visible\:outline-2:focus-visible {
+    outline-style: var(--tw-outline-style);
+    outline-width: 2px;
+  }
+  .tw\:focus-visible\:outline-primary:focus-visible {
+    outline-color: var(--color-primary);
+  }
   @media (width >= 40rem) {
     .tw\:sm\:w-auto {
       width: auto;
@@ -7776,7 +7795,7 @@
 }
 .dt-container .dt-buttons button:hover {
   background-color: var(--color-primary, #3b82f6) !important;
-  color: #ffffff !important;
+  color: var(--color-primary-content, #ffffff) !important;
   border-color: var(--color-primary, #3b82f6) !important;
 }
 .dt-container .dt-paging {
@@ -7816,7 +7835,7 @@
 }
 .dt-container .dt-paging .dt-paging-button.current, .dt-container .dt-paging .dt-paging-button.active {
   background-color: var(--color-primary, #3b82f6) !important;
-  color: #ffffff !important;
+  color: var(--color-primary-content, #ffffff) !important;
   font-weight: 700 !important;
 }
 .dt-container .dt-paging .dt-paging-button:hover:not(.current):not(.disabled) {
@@ -7838,105 +7857,6 @@
   background-color: var(--color-accent) !important;
   color: var(--color-accent-content, #ffffff) !important;
   border-color: var(--color-accent) !important;
-}
-calendar-date {
-  --color-accent: var(--color-primary, #3b82f6);
-  --color-text-on-accent: var(--color-primary-content, #ffffff);
-  font-family: inherit;
-}
-calendar-date::part(header) {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
-}
-calendar-date::part(heading) {
-  font-weight: 700;
-  font-size: 0.95rem;
-  color: var(--color-base-content);
-  opacity: 0.9;
-}
-calendar-date::part(button) {
-  background-color: var(--color-base-300, #2a323c);
-  color: var(--color-base-content);
-  border: 1px solid rgba(128, 128, 128, 0.15);
-  border-radius: var(--radius-selector, 0.5rem);
-  width: 1.85rem;
-  height: 1.85rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s ease;
-  cursor: pointer;
-}
-calendar-date::part(button):hover {
-  background-color: var(--color-primary);
-  color: var(--color-primary-content);
-  border-color: var(--color-primary);
-}
-calendar-date::part(disabled) {
-  opacity: 0.35 !important;
-  cursor: not-allowed !important;
-  background-color: transparent !important;
-  color: var(--color-base-content) !important;
-  border-color: rgba(128, 128, 128, 0.1) !important;
-}
-calendar-month {
-  --color-accent: var(--color-primary, #3b82f6);
-  --color-text-on-accent: var(--color-primary-content, #ffffff);
-}
-calendar-month::part(heading) {
-  font-size: 0.85rem;
-  font-weight: 600;
-  opacity: 0.8;
-  margin-bottom: 0.25rem;
-}
-calendar-month::part(button) {
-  font-size: 0.75rem;
-  width: 2rem;
-  height: 2rem;
-  border-radius: var(--radius-selector, 0.5rem);
-  transition: all 0.15s ease;
-  cursor: pointer;
-  color: var(--color-base-content);
-}
-calendar-month::part(button):hover {
-  background-color: var(--color-base-300, #2a323c);
-}
-calendar-month::part(today) {
-  color: var(--color-primary);
-  font-weight: 800;
-  border: 1px double var(--color-primary);
-}
-calendar-month::part(today selected) {
-  color: var(--color-primary-content);
-  border: none;
-}
-calendar-month::part(outside) {
-  opacity: 0.25;
-}
-calendar-select-month::part(label), calendar-select-year::part(label) {
-  position: absolute;
-  transform: scale(0);
-  width: 0;
-  height: 0;
-  overflow: hidden;
-}
-calendar-select-month::part(select), calendar-select-year::part(select) {
-  appearance: auto;
-  background-color: var(--color-base-300, #2a323c);
-  color: var(--color-base-content);
-  border: 1px solid rgba(128, 128, 128, 0.2);
-  border-radius: var(--radius-selector, 0.5rem);
-  font-size: 0.85rem;
-  font-weight: 600;
-  padding: 0.15rem 0.5rem;
-  cursor: pointer;
-  outline: none;
-}
-calendar-select-month::part(select):hover, calendar-select-year::part(select):hover {
-  background-color: var(--color-base-100);
-  border-color: var(--color-primary);
 }
 calendar-date {
   --color-accent: var(--color-primary, #3b82f6);
@@ -8126,6 +8046,22 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
   100% {
     box-shadow: 0 0 0 8px rgba(245, 158, 11, 0.55);
   }
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-input-aura:focus-within::before {
+    animation: none;
+  }
+}
+.field-highlight {
+  background-color: var(--color-warning, #facc15);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in srgb, var(--color-warning, #facc15) 15%, transparent);
+  }
+  outline: 1px solid var(--color-warning, #facc15);
+  @supports (color: color-mix(in lab, red, red)) {
+    outline: 1px solid color-mix(in srgb, var(--color-warning, #facc15) 50%, transparent);
+  }
+  border-radius: var(--radius-field, 0.25rem);
 }
 @layer base {
   :where(:root),:root:has(input.theme-controller[value=light]:checked),[data-theme=light] {
@@ -9619,6 +9555,11 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
   syntax: "*";
   inherits: false;
 }
+@property --tw-outline-style {
+  syntax: "*";
+  inherits: false;
+  initial-value: solid;
+}
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -9679,6 +9620,7 @@ input[type="search"]::-webkit-search-cancel-button, input[type="search"]::-webki
       --tw-backdrop-saturate: initial;
       --tw-backdrop-sepia: initial;
       --tw-duration: initial;
+      --tw-outline-style: solid;
     }
   }
 }
