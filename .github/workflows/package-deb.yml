@@ -2,11 +2,11 @@ name: Build & Package Debian Release (.deb)
 
 on:
   push:
+    branches:
+      - edge
     tags:
       - 'indi_v*'
-  schedule:
-    # Nightly build every night at 02:00 UTC
-    - cron: '0 2 * * *'
+      - 'pr-*'
   workflow_dispatch:
     inputs:
       indi_core_tag:
@@ -36,18 +36,18 @@ jobs:
       - name: Check for changes since last nightly
         id: check
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "Tag pushed, forcing build."
+          if [ "${{ github.event_name }}" == "push" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "Push or manual event, forcing build."
             echo "should_build=true" >> $GITHUB_OUTPUT
           else
             LATEST_COMMIT=$(git rev-parse HEAD)
-            NIGHTLY_COMMIT=$(git rev-list -n 1 nightly 2>/dev/null || echo "none")
+            EDGE_COMMIT=$(git rev-list -n 1 refs/tags/edge 2>/dev/null || echo "none")
             
-            if [ "$NIGHTLY_COMMIT" == "none" ]; then
-              echo "No nightly tag found, building."
+            if [ "$EDGE_COMMIT" == "none" ]; then
+              echo "No edge tag found, building."
               echo "should_build=true" >> $GITHUB_OUTPUT
-            elif [ "$LATEST_COMMIT" == "$NIGHTLY_COMMIT" ]; then
-              echo "No new commits since last nightly build. Skipping."
+            elif [ "$LATEST_COMMIT" == "$EDGE_COMMIT" ]; then
+              echo "No new commits since last edge build. Skipping."
               echo "should_build=false" >> $GITHUB_OUTPUT
             else
               echo "New commits found, building."
@@ -97,12 +97,20 @@ jobs:
             VERSION="${VERSION#v}"
             SUITE="stable"
             IS_RELEASE="true"
+          elif [[ "${{ github.ref }}" == refs/tags/pr-* ]]; then
+            # Single-PR Test Build
+            DATE_STAMP=$(date +'%Y%m%d.%H%M')
+            BASE_VER=$(python3 misc/bump_version.py --show | awk '{print $NF}')
+            PR_TAG="${{ github.ref_name }}"
+            VERSION="${BASE_VER}~${PR_TAG//-/.}.${DATE_STAMP}"
+            SUITE="edge"
+            IS_RELEASE="false"
           else
             # Nightly / Dev Build -> Nightly
             DATE_STAMP=$(date +'%Y%m%d.%H%M')
             BASE_VER=$(python3 misc/bump_version.py --show | awk '{print $NF}')
-            VERSION="${BASE_VER}~nightly.${DATE_STAMP}"
-            SUITE="nightly"
+            VERSION="${BASE_VER}~edge.${DATE_STAMP}"
+            SUITE="edge"
             IS_RELEASE="false"
           fi
 
@@ -125,7 +133,41 @@ jobs:
 
       - name: Generate Release Notes Summary & Git Changelog
         run: |
+          if [[ "${{ github.ref }}" == refs/tags/pr-* ]] || [[ "${{ github.ref }}" == refs/tags/v* ]] || [[ "${{ github.ref }}" == refs/tags/indi_v* ]]; then
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+          else
+            RELEASE_TAG="edge"
+          fi
+          ASSET_VER="${VERSION//\~/.}"
           {
+            if [ -f "EDGE_COMPOSITION.md" ]; then
+              cat EDGE_COMPOSITION.md
+              echo ""
+              echo "---"
+              echo ""
+            fi
+            echo "### How to Install"
+            echo ""
+            if [ "${RELEASE_TAG}" == "edge" ]; then
+              echo "#### Option 1: APT Repository (Recommended)"
+              echo '```bash'
+              echo 'CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME}}")'
+              echo 'sudo mkdir -p /etc/apt/keyrings'
+              echo 'curl -fsSL https://edge.apt.indi-allsky.org/key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/indi-allsky-edge.gpg'
+              echo 'echo "deb [signed-by=/etc/apt/keyrings/indi-allsky-edge.gpg] https://edge.apt.indi-allsky.org ${CODENAME} edge" | sudo tee /etc/apt/sources.list.d/indi-allsky-edge.list'
+              echo 'sudo apt-get update'
+              echo 'sudo apt-get install -y indi-allsky-edge'
+              echo '```'
+              echo ""
+              echo "#### Option 2: Direct .deb Download"
+            fi
+            echo '```bash'
+            echo 'ARCH=$(dpkg --print-architecture)'
+            echo 'CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME}}")'
+            echo "wget \"https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/indi-allsky-edge_${ASSET_VER}+\${CODENAME}_\${ARCH}.deb\""
+            echo "sudo apt install -y \"./indi-allsky-edge_${ASSET_VER}+\${CODENAME}_\${ARCH}.deb\""
+            echo '```'
+            echo ""
             echo "### Bundled INDI & Driver Versions"
             echo "* **INDI Core / Server**: \`${{ env.INDI_CORE_TAG }}\`"
             echo "* **INDI 3rd-Party Drivers**: \`${{ env.INDI_3RDPARTY_TAG }}\` (ZWO ASI, QHY, Player One, ToupTek, SVBONY, Starlight Xpress, etc.)"
@@ -391,7 +433,9 @@ jobs:
     name: Publish Releases
     needs: [check-changes, build-deb]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/indi_v') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: always() && needs.build-deb.result == 'success'
+    permissions:
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
@@ -412,23 +456,32 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prune Stale Nightly Assets & Publish Release
-        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/v') && !startsWith(github.ref, 'refs/tags/indi_v'))
+      - name: Prune Stale Edge Assets & Publish Release
+        if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.EDGE_PAT || secrets.GITHUB_TOKEN }}
         run: |
-          echo "=== Resetting nightly pre-release ==="
-          # Delete existing nightly release and its tag in 1 call to wipe old assets instantly
-          gh release delete nightly -y --cleanup-tag 2>/dev/null || true
+          if [[ "${{ github.ref }}" == refs/tags/pr-* ]]; then
+            RELEASE_TAG="${{ github.ref_name }}"
+            RELEASE_TITLE="PR Test Build (${RELEASE_TAG})"
+            NOTES_FLAG="--notes 'Automated INDI Allsky Single-PR Test Build'"
+            echo "=== Resetting ${RELEASE_TAG} pre-release ==="
+            gh release delete "$RELEASE_TAG" -y 2>/dev/null || true
+          else
+            RELEASE_TAG="edge"
+            RELEASE_TITLE="Bleeding Edge Build"
+            NOTES_FLAG="--notes 'Automated INDI Allsky Bleeding Edge Build'"
+            echo "=== Resetting edge pre-release ==="
+            # Delete existing edge release and its tag in 1 call to wipe old assets instantly
+            gh release delete edge -y --cleanup-tag 2>/dev/null || true
+          fi
 
-          # Create fresh nightly release with target commit SHA
-          NOTES_FLAG="--notes 'Automated INDI Allsky Nightly Build'"
           if [ -f "downloaded-debs/release_notes.md" ]; then
             NOTES_FLAG="--notes-file downloaded-debs/release_notes.md"
           fi
 
-          gh release create nightly downloaded-debs/*.deb \
-            --title "Nightly Build" \
+          gh release create "$RELEASE_TAG" downloaded-debs/*.deb \
+            --title "$RELEASE_TITLE" \
             --prerelease \
             --target "${{ github.sha }}" \
             $NOTES_FLAG
@@ -437,7 +490,7 @@ jobs:
     name: Build & Deploy APT Repo (Cloudflare R2)
     needs: [check-changes, build-deb, publish]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/indi_v') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: always() && needs.build-deb.result == 'success' && !startsWith(github.ref, 'refs/tags/pr-') && !startsWith(github.ref, 'refs/tags/indi_v')
     permissions:
       contents: write
     steps:
@@ -457,13 +510,13 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
           R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET || 'indi-allsky-apt' }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET || 'indi-allsky-edge-apt' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y reprepro gnupg jq
 
           # Setup repository directory structure
-          mkdir -p apt-repo/conf debs-stable debs-nightly
+          mkdir -p apt-repo/conf
 
           # Sync existing database and package pool from Cloudflare R2
           if [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$R2_ACCOUNT_ID" ]; then
@@ -490,55 +543,44 @@ jobs:
             fi
           fi
 
-          # Create reprepro distributions configuration with stable and nightly components
+          # Create reprepro distributions configuration with edge component
           cat <<EOF | sed -e 's/^[[:space:]]*//' > apt-repo/conf/distributions
-          Origin: INDI Allsky
-          Label: indi-allsky
+          Origin: INDI Allsky Edge
+          Label: indi-allsky-edge
           Suite: bookworm
           Codename: bookworm
           Architectures: amd64 arm64
-          Components: stable nightly
-          Description: INDI Allsky APT Repository for Debian 12 (Bookworm)
+          Components: edge
+          Description: INDI Allsky Edge APT Repository for Debian 12 (Bookworm)
           ${SIGNING_DIRECTIVE}
 
-          Origin: INDI Allsky
-          Label: indi-allsky
+          Origin: INDI Allsky Edge
+          Label: indi-allsky-edge
           Suite: trixie
           Codename: trixie
           Architectures: amd64 arm64
-          Components: stable nightly
-          Description: INDI Allsky APT Repository for Debian 13 (Trixie)
+          Components: edge
+          Description: INDI Allsky Edge APT Repository for Debian 13 (Trixie)
           ${SIGNING_DIRECTIVE}
 
-          Origin: INDI Allsky
-          Label: indi-allsky
+          Origin: INDI Allsky Edge
+          Label: indi-allsky-edge
           Suite: noble
           Codename: noble
           Architectures: amd64 arm64
-          Components: stable nightly
-          Description: INDI Allsky APT Repository for Ubuntu 24.04 (Noble)
+          Components: edge
+          Description: INDI Allsky Edge APT Repository for Ubuntu 24.04 (Noble)
           ${SIGNING_DIRECTIVE}
 
-          Origin: INDI Allsky
-          Label: indi-allsky
+          Origin: INDI Allsky Edge
+          Label: indi-allsky-edge
           Suite: resolute
           Codename: resolute
           Architectures: amd64 arm64
-          Components: stable nightly
-          Description: INDI Allsky APT Repository for Ubuntu 26.04 (Resolute)
+          Components: edge
+          Description: INDI Allsky Edge APT Repository for Ubuntu 26.04 (Resolute)
           ${SIGNING_DIRECTIVE}
           EOF
-
-          # Determine whether current build is stable or nightly and organize packages
-          if [[ "${{ github.ref }}" == refs/tags/indi_v* ]] || [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "Processing tagged release -> indexing to 'stable' component"
-            cp debs/*.deb debs-stable/ 2>/dev/null || true
-            CURRENT_TAG="${GITHUB_REF_NAME}"
-          else
-            echo "Processing dev/nightly build -> indexing to 'nightly' component"
-            cp debs/*.deb debs-nightly/ 2>/dev/null || true
-            CURRENT_TAG="nightly"
-          fi
 
           # Helper to safely include a .deb package into reprepro with duplicate replacement
           include_package() {
@@ -579,51 +621,15 @@ jobs:
             done
           }
 
-          # Clean up any legacy indi-allsky-web packages from reprepro database
-          for distro in bookworm trixie noble resolute; do
-            reprepro -C stable -b apt-repo remove "$distro" indi-allsky-web 2>/dev/null || true
-            reprepro -C nightly -b apt-repo remove "$distro" indi-allsky-web 2>/dev/null || true
-          done
-
-          # Index all historical tagged releases into 'stable' component
-          echo "=== Fetching all tagged stable release packages from GitHub Releases ==="
-          mkdir -p debs-tags
-          for tag in $(gh release list --exclude-drafts --limit 10 --json tagName --jq '.[].tagName' 2>/dev/null | grep -v '^nightly$' || true); do
-            mkdir -p "debs-tags/$tag"
-            gh release download "$tag" --pattern '*.deb' --dir "debs-tags/$tag" 2>/dev/null || true
-            rm -f debs-tags/"$tag"/*indi-allsky-web*.deb 2>/dev/null || true
-            index_debs_dir stable "debs-tags/$tag"
-          done
-
-          # Index current stable packages if tagged
-          rm -f debs-stable/*indi-allsky-web*.deb 2>/dev/null || true
-          index_debs_dir stable debs-stable
-
-          # If building a stable release, also fetch existing nightly packages so nightly component remains populated
-          if [ "${CURRENT_TAG}" != "nightly" ]; then
-            echo "=== Fetching existing nightly release packages from GitHub Releases ==="
-            mkdir -p debs-nightly
-            gh release download nightly --pattern '*.deb' --dir debs-nightly 2>/dev/null || true
-          fi
-
-          # Index nightly packages into 'nightly' component
-          echo "=== Indexing nightly packages into reprepro ==="
-          rm -f debs-nightly/*indi-allsky-web*.deb 2>/dev/null || true
-          index_debs_dir nightly debs-nightly
+          # Index edge packages into 'edge' component
+          echo "=== Indexing edge packages into reprepro ==="
+          index_debs_dir edge debs
 
           # Clean up unreferenced pool files
           reprepro -b apt-repo deleteunreferenced 2>/dev/null || true
 
           # Export all distributions Release & InRelease indices
           reprepro -b apt-repo export
-
-          # Install landing page index.html and assets
-          if [ -f "content/apt_index.html" ]; then
-            cp content/apt_index.html apt-repo/index.html
-          fi
-          if [ -f "indi_allsky/flask/static/images/logo_outline_full.png" ]; then
-            cp indi_allsky/flask/static/images/logo_outline_full.png apt-repo/logo.png
-          fi
 
           # Disable Jekyll on static hosts
           touch apt-repo/.nojekyll
@@ -634,15 +640,13 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
           R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET || 'indi-allsky-apt' }}
-          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET || 'indi-allsky-edge-apt' }}
         run: |
           echo "=== Deploying APT Repository to Cloudflare R2 ==="
           # 1. Sync immutable binary artifacts (.deb, .gpg) with long cache
           aws s3 sync apt-repo/ "s3://${R2_BUCKET}/" \
             --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
             --exclude "dists/*" \
-            --exclude "*.html" \
             --cache-control "public, max-age=31536000, immutable" \
             --delete
 
@@ -651,6 +655,7 @@ jobs:
             --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
             --cache-control "no-cache, no-store, must-revalidate" \
             --delete
+          exit 0  # Skip index.html landing page upload for indi-allsky-edge
 
           # 3. Sync web landing page
           aws s3 cp apt-repo/index.html "s3://${R2_BUCKET}/index.html" \
