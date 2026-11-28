@@ -367,6 +367,9 @@ class CaptureWorker(Process):
         self._expUtils = IndiAllSkyExposureUtils(self.config, self.exposure_av, self.gain_av, self.binning_av)
         self._dateCalcs = IndiAllSkyDateCalcs(self.config, self.position_av)
 
+        from .otel import init_otel
+        init_otel(service_name='indi-allsky', component='capture-worker', loggers=[logger])
+
 
         ### use this as a method to log uncaught exceptions
         try:
@@ -863,6 +866,13 @@ class CaptureWorker(Process):
 
                         # if the image queue grows too large, introduce delays to new exposures
                         image_queue_size = self.image_q.qsize()
+
+                        from .otel import get_pipeline_instruments
+                        otel_inst = get_pipeline_instruments()
+                        dn_attr = {'day_night': 'night' if self.night else 'day'}
+                        otel_inst['frames_captured'].add(1, dn_attr)
+                        otel_inst['exposure_duration'].record(float(self._expUtils.EXPOSURE_NEXT), dn_attr)
+                        otel_inst['queue_depth'].set(image_queue_size, {'queue': 'image_q'})
                         if image_queue_size > 0:
                             logger.warning('Image queue depth: %d', image_queue_size)
 

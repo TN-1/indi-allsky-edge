@@ -86,6 +86,7 @@ Welcome to the indi-allsky wiki!
 * [MQTT Broker Publishing](MQTT-Broker-Publishing)
 * [AllskyTeam Map](AllskyTeam-Map)
 * [Grafana, Telegraf & InfluxDB](Grafana-Telegraf-Influx-Integration)
+* [OpenTelemetry Integration](OpenTelemetry-Integration)
 * [Web Status Configuration](Web-Status-Configuration)
 * [Model Context Protocol (MCP)](Model-Context-Protocol-(MCP))
 

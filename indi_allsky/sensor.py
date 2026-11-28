@@ -174,6 +174,9 @@ class SensorWorker(Process):
         signal.signal(signal.SIGINT, self.sigint_handler_worker)
         #signal.signal(signal.SIGALRM, self.sigalarm_handler_worker)
 
+        from .otel import init_otel
+        init_otel(service_name='indi-allsky', component='sensor-worker', loggers=[logger])
+
 
         ### use this as a method to log uncaught exceptions
         try:
@@ -507,29 +510,34 @@ class SensorWorker(Process):
 
 
     def update_sensors(self):
+        from .otel import get_pipeline_instruments, get_tracer
+        tracer = get_tracer('indi_allsky.sensor')
+        otel_inst = get_pipeline_instruments()
+
         # update sensor readings
-        for sensor in self.sensors:
-            try:
-                sensor_data = sensor.update()
+        with tracer.start_as_current_span('sensor.update'):
+            for sensor in self.sensors:
+                try:
+                    sensor_data = sensor.update()
 
-                with self.sensors_user_av.get_lock():
-                    if not isinstance(sensor_data.get('dew_point'), type(None)):
-                        self.sensors_user_av[constants.SENSOR_USER_DEW_POINT] = float(sensor_data['dew_point'])
+                    with self.sensors_user_av.get_lock():
+                        if not isinstance(sensor_data.get('dew_point'), type(None)):
+                            self.sensors_user_av[constants.SENSOR_USER_DEW_POINT] = float(sensor_data['dew_point'])
 
-                    if not isinstance(sensor_data.get('frost_point'), type(None)):
-                        self.sensors_user_av[constants.SENSOR_USER_FROST_POINT] = float(sensor_data['frost_point'])
+                        if not isinstance(sensor_data.get('frost_point'), type(None)):
+                            self.sensors_user_av[constants.SENSOR_USER_FROST_POINT] = float(sensor_data['frost_point'])
 
-                    if not isinstance(sensor_data.get('heat_index'), type(None)):
-                        self.sensors_user_av[constants.SENSOR_USER_HEAT_INDEX] = float(sensor_data['heat_index'])
+                        if not isinstance(sensor_data.get('heat_index'), type(None)):
+                            self.sensors_user_av[constants.SENSOR_USER_HEAT_INDEX] = float(sensor_data['heat_index'])
 
-                    if not isinstance(sensor_data.get('wind_degrees'), type(None)):
-                        self.sensors_user_av[constants.SENSOR_USER_WIND_DIR] = float(sensor_data['wind_degrees'])
+                        if not isinstance(sensor_data.get('wind_degrees'), type(None)):
+                            self.sensors_user_av[constants.SENSOR_USER_WIND_DIR] = float(sensor_data['wind_degrees'])
 
-                    if not isinstance(sensor_data.get('sqm_mag'), type(None)):
-                        self.sensors_user_av[constants.SENSOR_USER_SENSOR_SQM_MAG] = float(sensor_data['sqm_mag'])
+                        if not isinstance(sensor_data.get('sqm_mag'), type(None)):
+                            self.sensors_user_av[constants.SENSOR_USER_SENSOR_SQM_MAG] = float(sensor_data['sqm_mag'])
 
-                    if not isinstance(sensor_data.get('rain'), type(None)):
-                        self.sensors_user_av[constants.SENSOR_USER_RAIN] = float(sensor_data['rain'])
+                        if not isinstance(sensor_data.get('rain'), type(None)):
+                            self.sensors_user_av[constants.SENSOR_USER_RAIN] = float(sensor_data['rain'])
 
                     if not isinstance(sensor_data.get('rain_rate'), type(None)):
                         self.sensors_user_av[constants.SENSOR_USER_RAIN_RATE] = float(sensor_data['rain_rate'])
@@ -545,23 +553,28 @@ class SensorWorker(Process):
                         if v is None:
                             continue  # Keep the last measurement for an unavailable channel.
                         try:
-                            self.sensors_user_av[sensor.slot + i] = float(v)
+                            val = float(v)
+                            self.sensors_user_av[sensor.slot + i] = val
+                            otel_inst['sensor_value'].set(
+                                val,
+                                {'sensor.name': sensor.__class__.__name__, 'sensor.slot': str(sensor.slot + i)},
+                            )
                         except (TypeError, ValueError):
                             self.sensors_user_av[sensor.slot + i] = float('nan')
-            except SensorReadException as e:
-                logger.error('SensorReadException: {0:s}'.format(str(e)))
-                with self.sensors_user_av.get_lock():
-                    slot_count = sensor.METADATA.get('count', 1)
-                    for i in range(slot_count):
-                        self.sensors_user_av[sensor.slot + i] = float('nan')
-            except OSError as e:
-                logger.error('Sensor OSError: {0:s}'.format(str(e)))
-            except IOError as e:
-                logger.error('Sensor IOError: {0:s}'.format(str(e)))
-            except IndexError as e:
-                logger.error('Sensor slot error: {0:s}'.format(str(e)))
-            except Exception as e:
-                logger.exception('Sensor update exception on %s: %s', getattr(sensor, 'name', 'unknown'), str(e))
+                except SensorReadException as e:
+                    logger.error('SensorReadException: {0:s}'.format(str(e)))
+                    with self.sensors_user_av.get_lock():
+                        slot_count = sensor.METADATA.get('count', 1)
+                        for i in range(slot_count):
+                            self.sensors_user_av[sensor.slot + i] = float('nan')
+                except OSError as e:
+                    logger.error('Sensor OSError: {0:s}'.format(str(e)))
+                except IOError as e:
+                    logger.error('Sensor IOError: {0:s}'.format(str(e)))
+                except IndexError as e:
+                    logger.error('Sensor slot error: {0:s}'.format(str(e)))
+                except Exception as e:
+                    logger.exception('Sensor update exception on %s: %s', getattr(sensor, 'name', 'unknown'), str(e))
 
 
     def check_dew_heater_thresholds(self):

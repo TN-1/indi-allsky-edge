@@ -16,12 +16,19 @@ application.logger.handlers = gunicorn_logger.handlers
 application.logger.setLevel(gunicorn_logger.level)
 
 
+indi_allsky_logger = logging.getLogger('indi_allsky')
+indi_allsky_logger.setLevel(logging.INFO)
+
 # Attach a syslog handler so 'indi_allsky' logger messages appear in webapp log
 if os.path.exists('/dev/log'):
     LOG_FORMATTER_SYSLOG = logging.Formatter('[%(levelname)s] %(processName)s-%(process)d %(module)s.%(funcName)s() [%(lineno)d]: %(message)s')
     LOG_HANDLER_SYSLOG = logging.handlers.SysLogHandler(address='/dev/log', facility=logging.handlers.SysLogHandler.LOG_LOCAL7)
     LOG_HANDLER_SYSLOG.setFormatter(LOG_FORMATTER_SYSLOG)
-
-    indi_allsky_logger = logging.getLogger('indi_allsky')
-    indi_allsky_logger.setLevel(logging.INFO)
     indi_allsky_logger.addHandler(LOG_HANDLER_SYSLOG)
+
+from indi_allsky.otel import init_otel  # noqa: E402
+init_otel(
+    service_name='indi-allsky-web',
+    component='wsgi',
+    loggers=[indi_allsky_logger, application.logger, gunicorn_logger],
+)

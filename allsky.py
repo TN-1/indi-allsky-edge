@@ -87,6 +87,9 @@ if __name__ == "__main__":
     os.environ['INDI_ALLSKY_LOG_TARGET'] = args.log
     configure_worker_logging(args.log)
 
+    from indi_allsky.otel import init_otel
+    init_otel(service_name='indi-allsky', component='main', loggers=[logger])
+
 
     args_list = list()
     kwargs_dict = dict()
