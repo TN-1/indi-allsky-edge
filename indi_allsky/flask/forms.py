@@ -1006,6 +1006,8 @@ def IMAGE_LABEL_TEMPLATE_validator(form, field):
         'wind_dir' : '',
         'wind_speed' : 0.0,
         'rain_status' : '',
+        'rain_rate' : 0.0,
+        'rain_24h' : 0.0,
         'custom_1' : '',
         'custom_2' : '',
         'custom_3' : '',
@@ -1113,6 +1115,8 @@ def WEB_STATUS_TEMPLATE_validator(form, field):
         'fan_status'        : '',
         'wind_dir'          : '',
         'rain_status'       : '',
+        'rain_rate'         : 0.0,
+        'rain_24h'          : 0.0,
     }
 
 
@@ -3394,6 +3398,7 @@ def TEMP_SENSOR__I2C_ADDRESS_validator(form, field):
     if sensor_class in (
         'blinka_wind_speed_sensor_wh_sp_ws01',
         'blinka_rain_sensor_fc37',
+        'blinka_rain_sensor_wh_sp_rg',
     ):
         return
 
@@ -4291,6 +4296,7 @@ class IndiAllskyConfigForm(FlaskForm):
         ),
         'Rain Sensors' : (
             ('blinka_rain_sensor_fc37', 'FC-37 Rain Sensor - digital (1 slot)'),
+            ('blinka_rain_sensor_wh_sp_rg', 'MISOL WH-SP-RG Tipping Bucket - pulse output (2 slots)'),
         ),
         'Wind Sensors' : (
             ('blinka_wind_speed_sensor_wh_sp_ws01', 'WH-SP-WS01 Cup Anemometer - pulse output (1 slot)'),

@@ -3289,6 +3289,8 @@ class ImageProcessor(object):
             rain_sensor_status = 'Error'
 
         label_data['rain_status'] = rain_sensor_status
+        label_data['rain_rate'] = self.sensors_user_av[constants.SENSOR_USER_RAIN_RATE]
+        label_data['rain_24h'] = self.sensors_user_av[constants.SENSOR_USER_RAIN_24H]
 
         label_data['wind_speed'] = self.sensors_user_av[constants.SENSOR_USER_WIND_SPEED]
 
@@ -4878,4 +4880,3 @@ class ImageData(object):
 
 
         self.detected_bit_depth = detected_bit_depth
-
