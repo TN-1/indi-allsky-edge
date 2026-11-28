@@ -120,6 +120,8 @@ from .forms import IndiAllskyConfigForm
 from .forms import IndiAllskyChartConfigForm
 from .forms import IndiAllskyImageViewer
 from .forms import IndiAllskyImageViewerPreload
+from .forms import DEFAULT_AURORA_MIN
+from .forms import normalize_aurora_min
 from .forms import IndiAllskyFitsImageViewer
 from .forms import IndiAllskyFitsImageViewerPreload
 from .forms import IndiAllskyGalleryViewer
@@ -6111,12 +6113,14 @@ class ImageViewerView(FormView):
         context = super(ImageViewerView, self).get_context()
 
         form_data = {
-            'CAMERA_ID'    : self.camera.id,
-            'YEAR_SELECT'  : None,
-            'MONTH_SELECT' : None,
-            'DAY_SELECT'   : None,
-            'HOUR_SELECT'  : None,
+            'CAMERA_ID'         : self.camera.id,
+            'YEAR_SELECT'       : None,
+            'MONTH_SELECT'      : None,
+            'DAY_SELECT'        : None,
+            'HOUR_SELECT'       : None,
             'FILTER_DETECTIONS' : None,
+            'FILTER_AURORA'     : None,
+            'FILTER_AURORA_MIN' : DEFAULT_AURORA_MIN,
         }
 
 
@@ -6157,6 +6161,8 @@ class AjaxImageViewerView(BaseView):
         form_day   = int(request.json.get('DAY_SELECT', 0))
         form_hour  = int(request.json.get('HOUR_SELECT', -1))  # 0 is a real hour
         form_filter_detections = bool(request.json.get('FILTER_DETECTIONS'))
+        form_filter_aurora = bool(request.json.get('FILTER_AURORA'))
+        aurora_min = normalize_aurora_min(request.json.get('FILTER_AURORA_MIN')) if form_filter_aurora else 0
 
         self.cameraSetup(camera_id=camera_id)
 
@@ -6173,25 +6179,15 @@ class AjaxImageViewerView(BaseView):
         )
 
 
-        if form_filter_detections:
-            # filter images that have a detection
-            form_viewer = IndiAllskyImageViewer(
-                data=request.json,
-                camera_id=camera_id,
-                detections_count=1,
-                asi676mc_diagnostic_download_enabled=asi676mc_diagnostic_download_enabled,
-                s3_prefix=self.s3_prefix,
-                local=local,
-            )
-        else:
-            form_viewer = IndiAllskyImageViewer(
-                data=request.json,
-                camera_id=camera_id,
-                detections_count=0,
-                asi676mc_diagnostic_download_enabled=asi676mc_diagnostic_download_enabled,
-                s3_prefix=self.s3_prefix,
-                local=local,
-            )
+        form_viewer = IndiAllskyImageViewer(
+            data=request.json,
+            camera_id=camera_id,
+            detections_count=1 if form_filter_detections else 0,
+            aurora_min=aurora_min,
+            asi676mc_diagnostic_download_enabled=asi676mc_diagnostic_download_enabled,
+            s3_prefix=self.s3_prefix,
+            local=local,
+        )
 
 
         json_data = {}
@@ -6636,6 +6632,8 @@ class GalleryViewerView(FormView):
             'DAY_SELECT'   : None,
             'HOUR_SELECT'  : None,
             'FILTER_DETECTIONS' : None,
+            'FILTER_AURORA'     : None,
+            'FILTER_AURORA_MIN' : DEFAULT_AURORA_MIN,
             'FILTER_ASI676MC_REPAIRED' : None,
             'FILTER_ASI676MC_EXCLUDED' : None,
             'FILTER_ASI676MC_FAILED' : None,
@@ -6676,6 +6674,8 @@ class AjaxGalleryViewerView(BaseView):
         hour_val   = request.json.get('HOUR_SELECT')
         form_hour  = int(hour_val) if hour_val is not None and hour_val != '' else -1
         form_filter_detections = bool(request.json.get('FILTER_DETECTIONS'))
+        form_filter_aurora = bool(request.json.get('FILTER_AURORA'))
+        aurora_min = normalize_aurora_min(request.json.get('FILTER_AURORA_MIN')) if form_filter_aurora else 0
         form_filter_asi676mc_repaired_requested = bool(request.json.get('FILTER_ASI676MC_REPAIRED'))
         form_filter_asi676mc_excluded_requested = bool(request.json.get('FILTER_ASI676MC_EXCLUDED'))
         form_filter_asi676mc_failed_requested = bool(request.json.get('FILTER_ASI676MC_FAILED'))
@@ -6707,25 +6707,15 @@ class AjaxGalleryViewerView(BaseView):
                 local = False
 
 
-        if form_filter_detections:
-            # filter images that have a detection
-            form_viewer = IndiAllskyGalleryViewer(
-                data=request.json,
-                camera_id=camera_id,
-                detections_count=1,
-                asi676mc_statuses=form_filter_asi676mc_statuses,
-                s3_prefix=self.s3_prefix,
-                local=local,
-            )
-        else:
-            form_viewer = IndiAllskyGalleryViewer(
-                data=request.json,
-                camera_id=camera_id,
-                detections_count=0,
-                asi676mc_statuses=form_filter_asi676mc_statuses,
-                s3_prefix=self.s3_prefix,
-                local=local,
-            )
+        form_viewer = IndiAllskyGalleryViewer(
+            data=request.json,
+            camera_id=camera_id,
+            detections_count=1 if form_filter_detections else 0,
+            aurora_min=aurora_min,
+            asi676mc_statuses=form_filter_asi676mc_statuses,
+            s3_prefix=self.s3_prefix,
+            local=local,
+        )
 
 
         json_data = {}
