@@ -367,7 +367,12 @@ class OIDCCallbackView(BaseView):
         user.loginIp = remote_addr
 
         user_data['idp'] = 'oidc'
-        user_data['oidc_token'] = token
+        password_key = app.config.get('PASSWORD_KEY', '')
+        if password_key and password_key != 'CHANGEME':
+            from .misc import encrypt_json_secret
+            user_data['oidc_token'] = encrypt_json_secret(token, password_key)
+        else:
+            user_data['oidc_token'] = token
         user_data['oidc_sub'] = oidc_sub
         user_data['oidc_sid'] = oidc_sid
         user_data.pop('oidc_logged_out_at', None)
@@ -406,7 +411,12 @@ class LogoutView(BaseView):
 
         # If session hint is missing, try to get it from the user record
         if not id_token and current_user_data.get('oidc_token'):
-            id_token = current_user_data['oidc_token'].get('id_token')
+            from .misc import decrypt_json_secret
+            try:
+                tok_obj = decrypt_json_secret(current_user_data['oidc_token'], app.config.get('PASSWORD_KEY', ''))
+                id_token = tok_obj.get('id_token')
+            except Exception:
+                id_token = None
 
         # Clear token from DB on logout for security
         if current_user_data.get('oidc_token'):

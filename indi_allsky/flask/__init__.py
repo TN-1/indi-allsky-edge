@@ -225,6 +225,59 @@ def create_app():
             if not request.path.endswith(('/notification', '/notifications', '/system_stats')):
                 session['oidc_last_active'] = now_ts
 
+        if current_user.is_authenticated and user_data.get('oidc_token'):
+            from .misc import decrypt_json_secret, encrypt_json_secret
+            password_key = app.config.get('PASSWORD_KEY', '')
+            try:
+                token = decrypt_json_secret(user_data['oidc_token'], password_key)
+            except Exception:
+                token = {}
+            # check expiration (with 60s buffer)
+            expires_at = token.get('expires_at')
+            if expires_at and expires_at < (time.time() + 60):
+                if 'refresh_token' in token and hasattr(oauth, 'oidc'):
+                    try:
+                        # Attempt refresh using the most compatible method
+                        if hasattr(oauth.oidc, 'refresh_token'):
+                            # Authlib 1.0+
+                            new_token = oauth.oidc.refresh_token(
+                                refresh_token=token['refresh_token']
+                            )
+                        else:
+                            # Fallback for older Authlib or when method is missing
+                            # We can use the internal session or fetch_access_token
+                            new_token = oauth.oidc.fetch_access_token(
+                                grant_type='refresh_token',
+                                refresh_token=token['refresh_token']
+                            )
+
+                        # Merge new token data into existing token to preserve id_token
+                        # as many IdPs do not return a new id_token on refresh
+                        token.update(new_token)
+
+                        # Use a copy to ensure SQLAlchemy detects the change
+                        if password_key and password_key != 'CHANGEME':
+                            user_data['oidc_token'] = encrypt_json_secret(dict(token), password_key)
+                        else:
+                            user_data['oidc_token'] = dict(token)
+                        current_user.data = user_data
+                        db.session.commit()
+
+                        session['oidc_expires_at'] = token.get('expires_at')
+                        app.logger.debug('OIDC token refreshed for user %s', current_user.username)
+                    except Exception as e:
+                        app.logger.error('OIDC token refresh failed for user %s: %s', current_user.username, str(e))
+                        logout_user()
+                        return redirect(url_for('auth_indi_allsky.login_view'))
+                else:
+                    # No refresh token, and token is expired. Force logout.
+                    app.logger.warning('OIDC token expired and no refresh token available for user %s', current_user.username)
+                    logout_user()
+                    return redirect(url_for('auth_indi_allsky.login_view'))
+            elif expires_at:
+                # Cache it if it was missing from session but present in DB
+                session['oidc_expires_at'] = expires_at
+
 
     @app.after_request
     def prevent_caching(response):
