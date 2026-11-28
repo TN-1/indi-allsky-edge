@@ -315,6 +315,11 @@
       cursor: not-allowed;
       opacity: 30%;
     }
+  }
+  .tw\:\@container {
+    container-type: inline-size;
+  }
+  @layer daisyui.l1.l2.l3 {
     .tw\:modal {
       pointer-events: none;
       visibility: hidden;
@@ -3144,6 +3149,8 @@
     .tw\:textarea:has( > textarea[disabled]) > textarea[disabled] {
       cursor: not-allowed;
     }
+  }
+  @layer daisyui.l1.l2.l3 {
     .tw\:modal-backdrop {
       grid-column-start: 1;
       grid-row-start: 1;
@@ -4202,7 +4209,7 @@
     mask-repeat: no-repeat;
     -webkit-mask-size: 100% 100%;
     mask-size: 100% 100%;
-    --svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cg fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m9 12l2 2l4-4'/%3E%3C/g%3E%3C/svg%3E");
+    --svg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cg fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='m16 9l-5.5 5.5L8 12'/%3E%3C/g%3E%3C/svg%3E");
   }
   .tw\:icon-\[lucide--clock\] {
     display: inline-block;
@@ -5553,6 +5560,9 @@
   .tw\:min-h-8 {
     min-height: calc(var(--tw-spacing) * 8);
   }
+  .tw\:min-h-11 {
+    min-height: calc(var(--tw-spacing) * 11);
+  }
   .tw\:min-h-\[50px\] {
     min-height: 50px;
   }
@@ -5744,6 +5754,9 @@
   .tw\:resize-none {
     resize: none;
   }
+  .tw\:\[scrollbar-width\:thin\] {
+    scrollbar-width: thin;
+  }
   .tw\:list-inside {
     list-style-position: inside;
   }
@@ -5770,6 +5783,9 @@
       border-block-end: none;
     }
   }
+  .tw\:auto-rows-8 {
+    grid-auto-rows: calc(var(--tw-spacing) * 8);
+  }
   .tw\:grid-cols-1 {
     grid-template-columns: repeat(1, minmax(0, 1fr));
   }
@@ -5784,6 +5800,9 @@
   }
   .tw\:grid-cols-12 {
     grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+  .tw\:grid-cols-\[7rem_minmax\(0\,1fr\)\] {
+    grid-template-columns: 7rem minmax(0,1fr);
   }
   .tw\:grid-cols-\[auto_1fr\] {
     grid-template-columns: auto 1fr;
@@ -6011,6 +6030,10 @@
   .tw\:border-x {
     border-inline-style: var(--tw-border-style);
     border-inline-width: 1px;
+  }
+  .tw\:border-y {
+    border-block-style: var(--tw-border-style);
+    border-block-width: 1px;
   }
   .tw\:border-t {
     border-top-style: var(--tw-border-style);
@@ -6692,6 +6715,10 @@
   .tw\:text-\[0\.6875rem\] {
     font-size: 0.6875rem;
   }
+  .tw\:leading-6 {
+    --tw-leading: calc(var(--tw-spacing) * 6);
+    line-height: calc(var(--tw-spacing) * 6);
+  }
   .tw\:leading-relaxed {
     --tw-leading: var(--tw-leading-relaxed);
     line-height: var(--tw-leading-relaxed);
@@ -7356,6 +7383,16 @@
     .tw\:aura:has( > .tw\:btn,  > .tw\:input,  > .tw\:select) {
       --aura-radius: var(--radius-field);
     }
+  }
+  @layer daisyui.l1.l2 {
+    .tw\:range-sm {
+      --range-thumb-size: calc(var(--size-selector, 0.25rem) * 5);
+    }
+  }
+  @layer daisyui.l1.l2.l3 {
+    .tw\:aura:has( > .tw\:btn,  > .tw\:input,  > .tw\:select) {
+      --aura-radius: var(--radius-field);
+    }
     .tw\:aura:has( > .tw\:checkbox,  > .tw\:toggle,  > .tw\:badge) {
       --aura-radius: var(--radius-selector);
     }
@@ -7407,6 +7444,9 @@
     .tw\:sm\:grid-cols-2 {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+    .tw\:sm\:grid-cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
     .tw\:sm\:grid-cols-\[10rem_1fr\] {
       grid-template-columns: 10rem 1fr;
     }
@@ -7419,8 +7459,19 @@
     .tw\:sm\:items-center {
       align-items: center;
     }
+    .tw\:sm\:items-end {
+      align-items: flex-end;
+    }
     .tw\:sm\:p-6 {
       padding: calc(var(--tw-spacing) * 6);
+    }
+  }
+  @media (width >= 48rem) {
+    .tw\:md\:grid-cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .tw\:md\:grid-cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
   @media (width >= 64rem) {
@@ -7455,6 +7506,21 @@
     }
     .tw\:xl\:justify-end {
       justify-content: flex-end;
+    }
+  }
+  @container (width >= 20rem) {
+    .tw\:\@min-\[20rem\]\:grid-cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @container (width >= 44rem) {
+    .tw\:\@min-\[44rem\]\:grid-cols-5 {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+  }
+  @container (width >= 88rem) {
+    .tw\:\@min-\[88rem\]\:grid-cols-10 {
+      grid-template-columns: repeat(10, minmax(0, 1fr));
     }
   }
 }

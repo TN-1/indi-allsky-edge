@@ -4,6 +4,7 @@
   "description": "Frontend assets for indi-allsky",
   "scripts": {
     "test": "python -m pytest tests/",
+    "test:core": "python -m pytest tests/core/",
     "test:flask": "python -m pytest tests/flask/",
     "test:lens_solver": "python -m pytest tests/lens_solver/",
     "test:mcp": "python -m pytest tests/mcp/",
